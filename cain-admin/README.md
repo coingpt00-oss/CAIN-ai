@@ -1,7 +1,7 @@
-# CAIN App (Lovable + Vercel)
-This is the main user-facing mobile web app for CAIN.
-- User registration and authentication
-- Airdrop dashboard
-- Market news
-- Exchange events
-- AI Chat (CoinGPT)
+# CAIN Admin Panel
+Internal management tool for admin use only.
+
+- Approve or reject user registrations  
+- Validate referral UIDs  
+- Monitor platform usage  
+- Manage Telegram broadcasts and logs
