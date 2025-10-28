@@ -6,3 +6,4 @@ Backend logic for CAIN — handles authentication, verification, and automated a
 - Scheduled jobs: Airdrop (07:00 KST), Market (hourly), Events (instant)
 - Push delivery via Firebase Cloud Messaging (or OneSignal)
 - Supabase integration (PostgreSQL, RLS)
+- (Optional) Symbol whitelist / mapping for TradingView embeds
