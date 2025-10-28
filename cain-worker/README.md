@@ -1,7 +1,7 @@
-# CAIN App (Lovable + Vercel)
-This is the main user-facing mobile web app for CAIN.
-- User registration and authentication
-- Airdrop dashboard
-- Market news
-- Exchange events
-- AI Chat (CoinGPT)
+# CAIN Worker (Cloudflare)
+Backend logic for CAIN — handles authentication, verification, and automated alerts.
+
+- Token and session management  
+- Referral verification  
+- Scheduled jobs: Airdrop (07:00), Market (hourly), Events (instant)  
+- Telegram and Supabase integration
