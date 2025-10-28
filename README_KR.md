@@ -23,6 +23,13 @@ AI 분석 챗봇, 트레이딩뷰 차트를 하나로 통합한 서비스입니�
 
 ---
 
+## 🪪 라이선스
+본 저장소는 [MIT License](./LICENSE) 하에서 배포됩니다.  
+(c) 2025 CAIN. All rights reserved.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
+---
+
 ## 🔗 링크
 
 - 공식 사이트: [https://cain.network](https://cain.network)
