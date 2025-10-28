@@ -5,3 +5,4 @@ Internal management tool for admin use only.
 - Validate referral UIDs against exchange affiliate dashboards
 - Monitor platform usage & logs
 - Manage push notifications (airdrop / news / events)
+- (Optional) Manage TradingView symbol whitelist for the app
