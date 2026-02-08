@@ -41,63 +41,9 @@ def env_top100():
         return DEFAULT_TOP100
     return [x.strip().upper() for x in raw.split(",") if x.strip()]
 
-def safe_get(url: str, timeout=12):
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "CAIN-BBB-Collector/1.0",
-        "Cache-Control": "no-cache",
-    }
-    return requests.get(url, headers=headers, timeout=timeout)
-
 # =========================
-# EXCHANGE FETCHERS
+# EXCHANGE FETCHERS (Bitget only)
 # =========================
-
-def fetch_binance_spot(top100):
-    url = "https://api.binance.com/api/v3/ticker/price"
-    r = safe_get(url)
-    r.raise_for_status()
-    data = r.json()
-
-    wanted = set(top100)
-    out = {}
-
-    for it in data:
-        sym = it["symbol"]
-        if sym.endswith("USDT"):
-            base = sym[:-4]
-            if base in wanted:
-                out[base] = float(it["price"])
-
-    if "USDT" in wanted:
-        out["USDT"] = 1.0
-    if "USDC" in wanted:
-        out["USDC"] = 1.0
-
-    return out
-
-def fetch_bybit_spot(top100):
-    url = "https://api.bybit.com/v5/market/tickers?category=spot"
-    r = safe_get(url)
-    r.raise_for_status()
-    data = r.json()["result"]["list"]
-
-    wanted = set(top100)
-    out = {}
-
-    for it in data:
-        sym = it["symbol"]
-        if sym.endswith("USDT"):
-            base = sym[:-4]
-            if base in wanted:
-                out[base] = float(it["lastPrice"])
-
-    if "USDT" in wanted:
-        out["USDT"] = 1.0
-    if "USDC" in wanted:
-        out["USDC"] = 1.0
-
-    return out
 
 def fetch_bitget_spot(top100):
     exchange = ccxt.bitget({"enableRateLimit": True})
@@ -112,14 +58,18 @@ def fetch_bitget_spot(top100):
         if pair in exchange.markets:
             symbols.append(pair)
 
+    # Bitget은 한 번에 너무 많이 치면 불안정할 수 있어 chunk 처리
     for i in range(0, len(symbols), 40):
         chunk = symbols[i:i+40]
         tickers = exchange.fetch_tickers(chunk)
         for pair, t in tickers.items():
             base = pair.split("/")[0]
-            out[base] = t["last"]
+            last = t.get("last")
+            if last is not None:
+                out[base] = float(last)
         time.sleep(0.2)
 
+    # 스테이블은 1로 고정 (표시/계산 안정화)
     if "USDT" in wanted:
         out["USDT"] = 1.0
     if "USDC" in wanted:
@@ -161,18 +111,6 @@ def main():
     errors = []
 
     try:
-        binance = fetch_binance_spot(top100)
-    except Exception as e:
-        binance = {}
-        errors.append(f"binance: {e}")
-
-    try:
-        bybit = fetch_bybit_spot(top100)
-    except Exception as e:
-        bybit = {}
-        errors.append(f"bybit: {e}")
-
-    try:
         bitget = fetch_bitget_spot(top100)
     except Exception as e:
         bitget = {}
@@ -188,21 +126,20 @@ def main():
         },
     }
 
+    # 심볼 프레임 생성
     for sym in top100:
         payload["global"]["spot"][sym] = {}
 
-    for sym, px in binance.items():
-        payload["global"]["spot"][sym]["binance"] = px
-    for sym, px in bybit.items():
-        payload["global"]["spot"][sym]["bybit"] = px
+    # bitget만 채움
     for sym, px in bitget.items():
         payload["global"]["spot"][sym]["bitget"] = px
 
+    # Bitget조차 비면 실패 처리
     if not any(payload["global"]["spot"][s] for s in payload["global"]["spot"]):
-        raise RuntimeError("No exchange returned data")
+        raise RuntimeError("Bitget returned no data")
 
     insert_supabase(SUPABASE_URL, SUPABASE_KEY, payload)
-    print("SUCCESS:", ts)
+    print("SUCCESS(bitget-only):", ts)
 
 if __name__ == "__main__":
     main()
