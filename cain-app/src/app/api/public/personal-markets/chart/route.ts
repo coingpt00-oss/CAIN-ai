@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 type LooseSupabaseClient = SupabaseClient<any, "public", any>;
 
 type MarketType = "spot" | "domestic-global" | "futures-spot";
-type RangeKey = "1h" | "24h" | "7d" | "30d" | "90d";
+type RangeKey = "1h" | "24h" | "7d" | "30d" | "90d" | "180d" | "1y" | "all";
 type UnitKey =
   | "usd"
   | "krw"
@@ -109,9 +109,9 @@ type ChartResponseBody = {
   latestState: LatestState | null;
   meta: {
     source: "supabase";
-    snapshotsTable: "pm_snapshots_3m" | "pm_chart_points_15m";
+    snapshotsTable: "pm_chart_points_15m" | "pm_chart_points_1d";
     stateTable: "pm_state";
-    bucket: "3m" | "15m";
+    bucket: "15m" | "1d";
     rawPoints: number;
     filteredPoints: number;
     returnedPoints: number;
@@ -181,6 +181,9 @@ function parseRange(raw: string | null): RangeKey {
   if (v === "7d") return "7d";
   if (v === "30d") return "30d";
   if (v === "90d") return "90d";
+  if (v === "180d") return "180d";
+  if (v === "1y" || v === "365d") return "1y";
+  if (v === "all" || v === "max") return "all";
 
   return "24h";
 }
@@ -188,13 +191,19 @@ function parseRange(raw: string | null): RangeKey {
 function rangeToFromIso(range: RangeKey): string {
   const now = Date.now();
 
-  const map: Record<RangeKey, number> = {
+  const map: Record<Exclude<RangeKey, "all">, number> = {
     "1h": 60 * 60 * 1000,
     "24h": 24 * 60 * 60 * 1000,
     "7d": 7 * 24 * 60 * 60 * 1000,
     "30d": 30 * 24 * 60 * 60 * 1000,
     "90d": 90 * 24 * 60 * 60 * 1000,
+    "180d": 180 * 24 * 60 * 60 * 1000,
+    "1y": 365 * 24 * 60 * 60 * 1000,
   };
+
+  if (range === "all") {
+    return "1970-01-01T00:00:00.000Z";
+  }
 
   return new Date(now - map[range]).toISOString();
 }
@@ -204,7 +213,10 @@ function targetPointsByRange(range: RangeKey): number {
   if (range === "24h") return 240;
   if (range === "7d") return 336;
   if (range === "30d") return 720;
-  return 1200;
+  if (range === "90d") return 1200;
+  if (range === "180d") return 360;
+  if (range === "1y") return 365;
+  return 1000;
 }
 
 function ttlSecondsByRange(range: RangeKey): number {
@@ -212,11 +224,14 @@ function ttlSecondsByRange(range: RangeKey): number {
   if (range === "24h") return 45;
   if (range === "7d") return 120;
   if (range === "30d") return 300;
-  return 600;
+  if (range === "90d") return 600;
+  if (range === "180d") return 900;
+  if (range === "1y") return 1800;
+  return 3600;
 }
 
-function shouldUseChartPoints(range: RangeKey): boolean {
-  return range === "7d" || range === "30d" || range === "90d";
+function shouldUseDailyPoints(range: RangeKey): boolean {
+  return range === "180d" || range === "1y" || range === "all";
 }
 
 function buildCacheKey(type: MarketType, symbolBase: string, range: RangeKey): string {
@@ -642,25 +657,26 @@ async function fetchSnapshots(
   }));
 }
 
+function toDbMarketType(type: MarketType): string {
+  if (type === "domestic-global") return "domestic_global";
+  if (type === "futures-spot") return "futures_spot";
+  return "spot";
+}
+
 async function fetchChartPoints(
   supabase: LooseSupabaseClient,
+  type: MarketType,
   symbolBase: string,
-  canonical: string,
-  fromIso: string,
+  range: RangeKey,
 ): Promise<SnapshotRow[]> {
-  const candidates = Array.from(new Set([symbolBase, canonical]));
-
-  const { data, error } = await supabase
-    .from("pm_chart_points_15m")
-    .select(
-      "bucket_ts,type,symbol,canonical_symbol,global_avg_usd,korea_avg_krw,kimchi_premium,score,volatility_ratio,dispersion_krw,delay_proxy,futures_basis_pct",
-    )
-    .in("canonical_symbol", candidates)
-    .gte("bucket_ts", fromIso)
-    .order("bucket_ts", { ascending: true });
+  const { data, error } = await supabase.rpc("get_pm_chart_points", {
+    p_type: toDbMarketType(type),
+    p_symbol: symbolBase,
+    p_period: range,
+  });
 
   if (error) {
-    throw new Error(`pm_chart_points_15m query failed: ${error.message}`);
+    throw new Error(`get_pm_chart_points rpc failed: ${error.message}`);
   }
 
   return ((data ?? []) as Record<string, unknown>[]).map((row) => {
@@ -682,7 +698,7 @@ async function fetchChartPoints(
       futures_basis_pct: futuresBasisPct,
       dispersion_krw: dispersionKrw,
       dispersion_krw_domestic_spread: null,
-      dispersion_krw_global_spread: null,
+      dispersion_krw_global_spread: dispersionKrw,
       delay_proxy: delayProxy,
       dominance: null,
       volatility_warn: null,
@@ -691,7 +707,7 @@ async function fetchChartPoints(
       domestic_avg_krw: toNumberOrNull(row.korea_avg_krw),
       global_spot_avg_krw: null,
       domestic_spread_krw: null,
-      global_spread_krw: null,
+      global_spread_krw: dispersionKrw,
       global_spread_pct: null,
       global_avg_usd: globalAvgUsd,
       global_spot_avg_usd: globalAvgUsd,
@@ -776,14 +792,12 @@ async function buildChartResponseBody(
   range: RangeKey,
 ): Promise<ChartResponseBody> {
   const fromIso = rangeToFromIso(range);
-  const useChartPoints = shouldUseChartPoints(range);
-  const snapshotsTable = useChartPoints ? "pm_chart_points_15m" : "pm_snapshots_3m";
-  const bucket = useChartPoints ? "15m" : "3m";
+  const useDailyPoints = shouldUseDailyPoints(range);
+  const snapshotsTable = useDailyPoints ? "pm_chart_points_1d" : "pm_chart_points_15m";
+  const bucket = useDailyPoints ? "1d" : "15m";
 
   const [snapshotRows, latestState] = await Promise.all([
-    useChartPoints
-      ? fetchChartPoints(supabase, symbolBase, canonical, fromIso)
-      : fetchSnapshots(supabase, symbolBase, canonical, fromIso),
+    fetchChartPoints(supabase, type, symbolBase, range),
     fetchLatestState(supabase, symbolBase, canonical),
   ]);
 
@@ -819,12 +833,13 @@ async function buildChartResponseBody(
       rawPoints: snapshotRows.length,
       filteredPoints: filteredRows.length,
       returnedPoints: sampledRows.length,
-      supportedRanges: ["1h", "24h", "7d", "30d", "90d"],
+      supportedRanges: ["1h", "24h", "7d", "30d", "90d", "180d", "1y", "all"],
       availableSeriesKeys: series.map((item) => item.key),
       notes: [
-        range === "1h" || range === "24h"
-          ? "1h/24h 단기 차트는 pm_snapshots_3m 원본 3분 데이터를 사용합니다."
-          : "7d/30d/90d 장기 차트는 pm_chart_points_15m 경량 15분 데이터를 사용합니다.",
+        useDailyPoints
+          ? "180d/1y/all 장기 차트는 pm_chart_points_1d 일봉 데이터를 사용합니다."
+          : "1h/24h/7d/30d/90d 차트는 pm_chart_points_15m 경량 15분 데이터를 사용합니다.",
+        "pm_snapshots_3m 원본 테이블은 차트 API에서 직접 조회하지 않습니다.",
         "newer columns가 있으면 우선 사용하고, 없으면 legacy columns(kimchi_premium, futures_basis_pct, dispersion_krw 등)로 fallback 합니다.",
       ],
       cache: {
