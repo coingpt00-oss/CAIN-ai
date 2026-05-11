@@ -109,9 +109,9 @@ type ChartResponseBody = {
   latestState: LatestState | null;
   meta: {
     source: "supabase";
-    snapshotsTable: "pm_chart_points_15m" | "pm_chart_points_1d";
+    snapshotsTable: "pm_snapshots_3m" | "pm_chart_points_15m" | "pm_chart_points_1d";
     stateTable: "pm_state";
-    bucket: "15m" | "1d";
+    bucket: "3m" | "15m" | "1d";
     rawPoints: number;
     filteredPoints: number;
     returnedPoints: number;
@@ -210,7 +210,7 @@ function rangeToFromIso(range: RangeKey): string {
 
 function targetPointsByRange(range: RangeKey): number {
   if (range === "1h") return 60;
-  if (range === "24h") return 240;
+  if (range === "24h") return 480;
   if (range === "7d") return 336;
   if (range === "30d") return 720;
   if (range === "90d") return 1200;
@@ -232,6 +232,10 @@ function ttlSecondsByRange(range: RangeKey): number {
 
 function shouldUseDailyPoints(range: RangeKey): boolean {
   return range === "180d" || range === "1y" || range === "all";
+}
+
+function shouldUseRawSnapshots(range: RangeKey): boolean {
+  return range === "1h" || range === "24h";
 }
 
 function buildCacheKey(type: MarketType, symbolBase: string, range: RangeKey): string {
@@ -792,12 +796,27 @@ async function buildChartResponseBody(
   range: RangeKey,
 ): Promise<ChartResponseBody> {
   const fromIso = rangeToFromIso(range);
+  const useRawSnapshots = shouldUseRawSnapshots(range);
   const useDailyPoints = shouldUseDailyPoints(range);
-  const snapshotsTable = useDailyPoints ? "pm_chart_points_1d" : "pm_chart_points_15m";
-  const bucket = useDailyPoints ? "1d" : "15m";
+
+  const snapshotsTable: ChartResponseBody["meta"]["snapshotsTable"] = useRawSnapshots
+    ? "pm_snapshots_3m"
+    : useDailyPoints
+      ? "pm_chart_points_1d"
+      : "pm_chart_points_15m";
+
+  const bucket: ChartResponseBody["meta"]["bucket"] = useRawSnapshots
+    ? "3m"
+    : useDailyPoints
+      ? "1d"
+      : "15m";
+
+  const snapshotRowsPromise = useRawSnapshots
+    ? fetchSnapshots(supabase, symbolBase, canonical, fromIso)
+    : fetchChartPoints(supabase, type, symbolBase, range);
 
   const [snapshotRows, latestState] = await Promise.all([
-    fetchChartPoints(supabase, type, symbolBase, range),
+    snapshotRowsPromise,
     fetchLatestState(supabase, symbolBase, canonical),
   ]);
 
@@ -836,10 +855,11 @@ async function buildChartResponseBody(
       supportedRanges: ["1h", "24h", "7d", "30d", "90d", "180d", "1y", "all"],
       availableSeriesKeys: series.map((item) => item.key),
       notes: [
-        useDailyPoints
-          ? "180d/1y/all 장기 차트는 pm_chart_points_1d 일봉 데이터를 사용합니다."
-          : "1h/24h/7d/30d/90d 차트는 pm_chart_points_15m 경량 15분 데이터를 사용합니다.",
-        "pm_snapshots_3m 원본 테이블은 차트 API에서 직접 조회하지 않습니다.",
+        useRawSnapshots
+          ? "1h/24h 단기 차트는 pm_snapshots_3m 원본 3분 데이터를 사용합니다."
+          : useDailyPoints
+            ? "180d/1y/all 장기 차트는 get_pm_chart_points RPC를 통해 pm_chart_points_1d 일봉 데이터를 사용합니다."
+            : "7d/30d/90d 중기 차트는 get_pm_chart_points RPC를 통해 pm_chart_points_15m 경량 15분 데이터를 사용합니다.",
         "newer columns가 있으면 우선 사용하고, 없으면 legacy columns(kimchi_premium, futures_basis_pct, dispersion_krw 등)로 fallback 합니다.",
       ],
       cache: {
