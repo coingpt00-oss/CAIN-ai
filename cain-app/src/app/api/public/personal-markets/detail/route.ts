@@ -416,15 +416,68 @@ function flattenExchangeGroup(group: ExchangeGroup) {
   ]);
 }
 
-function slimHistory(history: any) {
-  if (!history || typeof history !== "object") return history ?? null;
+type LocalHistoryStats = {
+  ok?: boolean;
+  days?: number | null;
+  firstTs?: string | null;
+  lastTs?: string | null;
+  source?: string | null;
+};
+
+function slimHistory(history: any, override?: LocalHistoryStats | null) {
+  const base = history && typeof history === "object"
+    ? compactObject({
+        days: history.days,
+        firstTs: history.firstTs ?? history.first_ts ?? null,
+        lastTs: history.lastTs ?? history.last_ts ?? null,
+        source: history.source ?? null,
+      })
+    : null;
+
+  if (!override || override.ok === false) return base;
 
   return compactObject({
-    days: history.days,
-    firstTs: history.firstTs ?? history.first_ts ?? null,
-    lastTs: history.lastTs ?? history.last_ts ?? null,
-    source: history.source ?? null,
+    days: override.days ?? base?.days ?? null,
+    firstTs: override.firstTs ?? base?.firstTs ?? null,
+    lastTs: override.lastTs ?? base?.lastTs ?? null,
+    source: override.source ?? "pm_chart_points_15m",
   });
+}
+
+async function fetchHistoryStatsFromLocalApi(
+  req: NextRequest,
+  symbol: string,
+  useNoStore: boolean
+): Promise<LocalHistoryStats | null> {
+  try {
+    const u = new URL("/api/public/personal-markets/history-stats", req.nextUrl.origin);
+    u.searchParams.set("symbol", symbol);
+
+    if (useNoStore) {
+      u.searchParams.set("nocache", "1");
+    }
+
+    const r = await fetch(u.toString(), {
+      method: "GET",
+      cache: useNoStore ? "no-store" : "force-cache",
+      next: useNoStore ? undefined : { revalidate: 60 },
+    });
+
+    if (!r.ok) return null;
+
+    const data = await r.json();
+    if (!data?.ok) return null;
+
+    return {
+      ok: true,
+      days: finiteNumberOrNull(data.days),
+      firstTs: data.firstTs ?? null,
+      lastTs: data.lastTs ?? null,
+      source: data.source ?? "pm_chart_points_15m",
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -507,6 +560,12 @@ export async function GET(req: NextRequest) {
     const normalizedExchanges = pickUpstreamExchanges(parsed, symbol);
     const symbolKey = symbol.toUpperCase();
     const normalizedItem = buildSlimItem(parsed, symbolKey, type, normalizedExchanges);
+    const normalizedHistory = await fetchHistoryStatsFromLocalApi(
+      req,
+      symbolKey,
+      useNoStore
+    );
+
     const response = {
       __route_version: "detail-route-v6-slim",
       ok: Boolean(parsed?.ok ?? true),
@@ -518,7 +577,7 @@ export async function GET(req: NextRequest) {
       summary: parsed?.summary ?? null,
       detail_exchanges: normalizedExchanges,
       all_exchanges: flattenExchangeGroup(normalizedExchanges),
-      history: slimHistory(parsed?.history),
+      history: slimHistory(parsed?.history, normalizedHistory),
       indicator: normalizedItem,
       item: normalizedItem,
     };

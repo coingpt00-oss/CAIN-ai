@@ -16,19 +16,18 @@ type StateRow = {
   last_updated_at: string | null;
 };
 
-type SnapshotLiteRow = {
+type ChartPointLiteRow = {
   symbol: string | null;
-  ts: string | null;
+  bucket_ts: string | null;
   kimchi_premium: number | null;
   volatility_ratio: number | null;
-  volatility_warn: boolean | number | null;
   dispersion_krw: number | null;
   delay_proxy: number | null;
   score: number | null;
   futures_basis_pct: number | null;
 };
 
-const DEFAULT_CDN_CACHE = "public, s-maxage=30, stale-while-revalidate=120";
+const DEFAULT_CDN_CACHE = "public, s-maxage=60, stale-while-revalidate=300";
 const BROWSER_CACHE = "public, max-age=0, must-revalidate";
 
 function j(
@@ -78,12 +77,6 @@ function toNumberOrNull(v: unknown): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-}
-
-function boolishToBool(v: unknown): boolean {
-  if (typeof v === "boolean") return v;
-  const n = Number(v);
-  return Number.isFinite(n) ? n !== 0 : false;
 }
 
 function hoursBetween(fromIso: string | null, toIso?: string | null): number {
@@ -137,13 +130,22 @@ function durationConfidence(hours: number) {
   };
 }
 
-function deriveChangeEvent(row: SnapshotLiteRow | null): string {
+function deriveVolatilityWarn(row: ChartPointLiteRow | null): boolean {
+  if (!row) return false;
+
+  const v = toNumberOrNull(row.volatility_ratio) || 0;
+  const d = toNumberOrNull(row.dispersion_krw) || 0;
+
+  return v >= 0.02 || d >= 1_500_000;
+}
+
+function deriveChangeEvent(row: ChartPointLiteRow | null): string {
   if (!row) return "변화 이벤트: 데이터 없음";
 
   const k = Math.abs(toNumberOrNull(row.kimchi_premium) || 0);
   const v = toNumberOrNull(row.volatility_ratio) || 0;
   const d = toNumberOrNull(row.dispersion_krw) || 0;
-  const warn = boolishToBool(row.volatility_warn);
+  const warn = deriveVolatilityWarn(row);
 
   if (k >= 12) return "변화 이벤트: 김프 극단 구간";
   if (k >= 8) return "변화 이벤트: 김프 확대 구간";
@@ -181,40 +183,40 @@ async function fetchLatestState(
   };
 }
 
-async function fetchOldestSnapshotTs(
+async function fetchOldestChartBucketTs(
   supabase: any,
   candidates: string[]
 ): Promise<string | null> {
   const { data, error } = await supabase
-    .from("pm_snapshots_3m")
-    .select("ts")
+    .from("pm_chart_points_15m")
+    .select("bucket_ts")
     .in("symbol", candidates)
-    .order("ts", { ascending: true })
+    .order("bucket_ts", { ascending: true })
     .limit(1);
 
   if (error) {
-    throw new Error(`pm_snapshots_3m oldest query failed: ${error.message}`);
+    throw new Error(`pm_chart_points_15m oldest query failed: ${error.message}`);
   }
 
   const row = (data ?? [])[0] as any;
-  return row?.ts ? String(row.ts) : null;
+  return row?.bucket_ts ? String(row.bucket_ts) : null;
 }
 
-async function fetchLatestSnapshot(
+async function fetchLatestChartPoint(
   supabase: any,
   candidates: string[]
-): Promise<SnapshotLiteRow | null> {
+): Promise<ChartPointLiteRow | null> {
   const { data, error } = await supabase
-    .from("pm_snapshots_3m")
+    .from("pm_chart_points_15m")
     .select(
-      "symbol,ts,kimchi_premium,volatility_ratio,volatility_warn,dispersion_krw,delay_proxy,score,futures_basis_pct"
+      "symbol,bucket_ts,kimchi_premium,volatility_ratio,dispersion_krw,delay_proxy,score,futures_basis_pct"
     )
     .in("symbol", candidates)
-    .order("ts", { ascending: false })
+    .order("bucket_ts", { ascending: false })
     .limit(1);
 
   if (error) {
-    throw new Error(`pm_snapshots_3m latest query failed: ${error.message}`);
+    throw new Error(`pm_chart_points_15m latest query failed: ${error.message}`);
   }
 
   const row = (data ?? [])[0] as any;
@@ -222,15 +224,9 @@ async function fetchLatestSnapshot(
 
   return {
     symbol: row.symbol ?? null,
-    ts: row.ts ?? null,
+    bucket_ts: row.bucket_ts ?? null,
     kimchi_premium: toNumberOrNull(row.kimchi_premium),
     volatility_ratio: toNumberOrNull(row.volatility_ratio),
-    volatility_warn:
-      typeof row.volatility_warn === "boolean"
-        ? row.volatility_warn
-        : row.volatility_warn == null
-        ? null
-        : Number(row.volatility_warn),
     dispersion_krw: toNumberOrNull(row.dispersion_krw),
     delay_proxy: toNumberOrNull(row.delay_proxy),
     score: toNumberOrNull(row.score),
@@ -238,19 +234,19 @@ async function fetchLatestSnapshot(
   };
 }
 
-async function fetchCountSince(
+async function fetchChartPointCountSince(
   supabase: any,
   candidates: string[],
   sinceIso: string
 ): Promise<number> {
   const { count, error } = await supabase
-    .from("pm_snapshots_3m")
-    .select("ts", { count: "exact", head: true })
+    .from("pm_chart_points_15m")
+    .select("bucket_ts", { count: "exact", head: true })
     .in("symbol", candidates)
-    .gte("ts", sinceIso);
+    .gte("bucket_ts", sinceIso);
 
   if (error) {
-    throw new Error(`pm_snapshots_3m count query failed: ${error.message}`);
+    throw new Error(`pm_chart_points_15m count query failed: ${error.message}`);
   }
 
   return Number(count || 0);
@@ -302,28 +298,38 @@ export async function GET(req: NextRequest) {
     });
 
     const now = new Date();
-    const since7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const since30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const since7d = new Date(
+      now.getTime() - 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+    const since30d = new Date(
+      now.getTime() - 30 * 24 * 60 * 60 * 1000
+    ).toISOString();
 
-    const [latestState, oldestSnapshotTs, latestSnapshot, points7d, points30d] =
-      await Promise.all([
-        fetchLatestState(supabase, candidates),
-        fetchOldestSnapshotTs(supabase, candidates),
-        fetchLatestSnapshot(supabase, candidates),
-        fetchCountSince(supabase, candidates, since7d),
-        fetchCountSince(supabase, candidates, since30d),
-      ]);
+    const [
+      latestState,
+      oldestChartBucketTs,
+      latestChartPoint,
+      points7d,
+      points30d,
+    ] = await Promise.all([
+      fetchLatestState(supabase, candidates),
+      fetchOldestChartBucketTs(supabase, candidates),
+      fetchLatestChartPoint(supabase, candidates),
+      fetchChartPointCountSince(supabase, candidates, since7d),
+      fetchChartPointCountSince(supabase, candidates, since30d),
+    ]);
 
-    const historyDays = calcDaysFromFirstTs(oldestSnapshotTs);
+    const historyDays = calcDaysFromFirstTs(oldestChartBucketTs);
     const durationHours = hoursBetween(
       latestState?.state_since || latestState?.last_changed_at || null
     );
     const durationDays = Number((durationHours / 24).toFixed(2));
     const confidence = durationConfidence(durationHours);
-    const changeEvent = deriveChangeEvent(latestSnapshot);
+    const changeEvent = deriveChangeEvent(latestChartPoint);
 
     const similarityReady = historyDays >= 30;
     const durationReady = historyDays >= 7;
+    const volatilityWarn = deriveVolatilityWarn(latestChartPoint);
 
     return j(
       200,
@@ -331,6 +337,7 @@ export async function GET(req: NextRequest) {
         ok: true,
         symbol: symbolBase,
         canonicalSymbol,
+
         currentState: latestState?.current_state || null,
         stateSince: latestState?.state_since || null,
         lastChangedAt: latestState?.last_changed_at || null,
@@ -340,8 +347,8 @@ export async function GET(req: NextRequest) {
         durationDays,
 
         historyDays,
-        firstTs: oldestSnapshotTs,
-        latestSnapshotTs: latestSnapshot?.ts || null,
+        firstTs: oldestChartBucketTs,
+        latestSnapshotTs: latestChartPoint?.bucket_ts || null,
 
         recentPoints: {
           "7d": points7d,
@@ -356,15 +363,15 @@ export async function GET(req: NextRequest) {
 
         changeEvent,
 
-        latestMetrics: latestSnapshot
+        latestMetrics: latestChartPoint
           ? {
-              kimchiPremium: latestSnapshot.kimchi_premium,
-              volatilityRatio: latestSnapshot.volatility_ratio,
-              volatilityWarn: boolishToBool(latestSnapshot.volatility_warn),
-              dispersionKrw: latestSnapshot.dispersion_krw,
-              delayProxy: latestSnapshot.delay_proxy,
-              score: latestSnapshot.score,
-              futuresBasisPct: latestSnapshot.futures_basis_pct,
+              kimchiPremium: latestChartPoint.kimchi_premium,
+              volatilityRatio: latestChartPoint.volatility_ratio,
+              volatilityWarn,
+              dispersionKrw: latestChartPoint.dispersion_krw,
+              delayProxy: latestChartPoint.delay_proxy,
+              score: latestChartPoint.score,
+              futuresBasisPct: latestChartPoint.futures_basis_pct,
             }
           : null,
 
@@ -378,15 +385,17 @@ export async function GET(req: NextRequest) {
         meta: {
           source: "supabase",
           stateTable: "pm_state",
-          snapshotsTable: "pm_snapshots_3m",
-          bucket: "3m",
+          snapshotsTable: "pm_chart_points_15m",
+          bucket: "15m",
+          note:
+            "state-summary는 장기 히스토리 안정성을 위해 15분 집계 테이블을 기준으로 계산합니다.",
         },
 
         _cache: nocache ? "bypass" : "cdn",
       },
-      nocache ? "no-store" : "s-maxage=30, stale-while-revalidate=120",
+      nocache ? "no-store" : DEFAULT_CDN_CACHE,
       {
-        "X-Cain-Upstream": "supabase-direct",
+        "X-Cain-Upstream": "supabase-on-cache-miss",
         "X-Cain-Cache": nocache ? "bypass" : "cdn",
       }
     );
