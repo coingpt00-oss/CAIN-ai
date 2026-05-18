@@ -234,28 +234,12 @@ async function fetchLatestChartPoint(
   };
 }
 
-async function fetchChartPointCountSince(
-  supabase: any,
-  candidates: string[],
-  sinceIso: string
-): Promise<number> {
-  const { data, error } = await supabase
-    .from("pm_chart_points_15m")
-    .select("bucket_ts")
-    .in("symbol", candidates)
-    .gte("bucket_ts", sinceIso)
-    .order("bucket_ts", { ascending: false })
-    .limit(5000);
+function estimateChartPointCount(historyDays: number, windowDays: number): number {
+  const safeHistoryDays = Number.isFinite(historyDays) ? Math.max(0, historyDays) : 0;
+  const effectiveDays = Math.min(safeHistoryDays, windowDays);
 
-  if (error) {
-    throw new Error(
-      `pm_chart_points_15m count query failed: ${
-        error.message || error.details || error.hint || JSON.stringify(error)
-      }`
-    );
-  }
-
-  return Array.isArray(data) ? data.length : 0;
+  // 15분봉 기준: 1시간 4개, 하루 96개
+  return Math.round(effectiveDays * 24 * 4);
 }
 
 export async function GET(req: NextRequest) {
@@ -303,29 +287,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const now = new Date();
-    const since7d = new Date(
-      now.getTime() - 7 * 24 * 60 * 60 * 1000
-    ).toISOString();
-    const since30d = new Date(
-      now.getTime() - 30 * 24 * 60 * 60 * 1000
-    ).toISOString();
-
-    const [
-      latestState,
-      oldestChartBucketTs,
-      latestChartPoint,
-      points7d,
-      points30d,
-    ] = await Promise.all([
-      fetchLatestState(supabase, candidates),
-      fetchOldestChartBucketTs(supabase, candidates),
-      fetchLatestChartPoint(supabase, candidates),
-      fetchChartPointCountSince(supabase, candidates, since7d),
-      fetchChartPointCountSince(supabase, candidates, since30d),
-    ]);
+    const [latestState, oldestChartBucketTs, latestChartPoint] =
+      await Promise.all([
+        fetchLatestState(supabase, candidates),
+        fetchOldestChartBucketTs(supabase, candidates),
+        fetchLatestChartPoint(supabase, candidates),
+      ]);
 
     const historyDays = calcDaysFromFirstTs(oldestChartBucketTs);
+    const points7d = estimateChartPointCount(historyDays, 7);
+    const points30d = estimateChartPointCount(historyDays, 30);
     const durationHours = hoursBetween(
       latestState?.state_since || latestState?.last_changed_at || null
     );
