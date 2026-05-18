@@ -239,17 +239,23 @@ async function fetchChartPointCountSince(
   candidates: string[],
   sinceIso: string
 ): Promise<number> {
-  const { count, error } = await supabase
+  const { data, error } = await supabase
     .from("pm_chart_points_15m")
-    .select("bucket_ts", { count: "exact", head: true })
+    .select("bucket_ts")
     .in("symbol", candidates)
-    .gte("bucket_ts", sinceIso);
+    .gte("bucket_ts", sinceIso)
+    .order("bucket_ts", { ascending: false })
+    .limit(5000);
 
   if (error) {
-    throw new Error(`pm_chart_points_15m count query failed: ${error.message}`);
+    throw new Error(
+      `pm_chart_points_15m count query failed: ${
+        error.message || error.details || error.hint || JSON.stringify(error)
+      }`
+    );
   }
 
-  return Number(count || 0);
+  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function GET(req: NextRequest) {
