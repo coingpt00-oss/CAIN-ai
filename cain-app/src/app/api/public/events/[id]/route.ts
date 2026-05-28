@@ -2,7 +2,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-service";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type EventRow = {
+  id: string;
+  source: string | null;
+  title: string | null;
+  url: string | null;
+  categories: string[] | null;
+  is_event: boolean | null;
+  published_at: string | null;
+  modified_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+
+  grade_hint: string | null;
+  reward_certainty: string | null;
+  reward_type: string | null;
+  new_user_only: boolean | null;
+  summary_ko: string | null;
+  reward_detail: string | null;
+  eligibility: string | null;
+  period_text: string | null;
+  participation_steps: string[] | null;
+  risk_note: string | null;
+  pre_filter: string | null;
+  is_active: boolean | null;
+  raw?: any;
+};
 
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -10,39 +38,102 @@ function isUuid(v: string) {
   );
 }
 
-export async function GET(
-  _req: NextRequest,
-  // ✅ Next 16 + Turbopack: params가 Promise로 들어올 수 있음
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const { id } = await ctx.params;
+function hiddenPreFilter(v: unknown) {
+  const pf = String(v || "").trim().toLowerCase();
 
-  if (!id || !isUuid(id)) {
+  return [
+    "manual_hide",
+    "menu_or_junk",
+    "not_event",
+    "not_event_related",
+    "system_notice",
+    "maintenance",
+    "listing_notice",
+    "terms_or_policy",
+  ].includes(pf);
+}
+
+type Ctx = { params: { id: string } } | { params: Promise<{ id: string }> };
+
+export async function GET(_req: NextRequest, ctx: Ctx) {
+  try {
+    const { id } = await Promise.resolve((ctx as any).params);
+
+    if (!id || !isUuid(id)) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_id", id: id ?? "" },
+        { status: 400 }
+      );
+    }
+
+    // Supabase 타입 생성 파일이 새 컬럼을 모를 수 있어서 any로 우회
+    const result = (await (supabaseAdmin.from("events") as any)
+      .select(
+        [
+          "id",
+          "source",
+          "title",
+          "url",
+          "categories",
+          "is_event",
+          "published_at",
+          "modified_at",
+          "created_at",
+          "updated_at",
+          "grade_hint",
+          "reward_certainty",
+          "reward_type",
+          "new_user_only",
+          "summary_ko",
+          "reward_detail",
+          "eligibility",
+          "period_text",
+          "participation_steps",
+          "risk_note",
+          "pre_filter",
+          "is_active",
+          "raw",
+        ].join(",")
+      )
+      .eq("id", id)
+      .maybeSingle()) as {
+      data: EventRow | null;
+      error: { message?: string } | null;
+    };
+
+    if (result.error) {
+      return NextResponse.json(
+        { ok: false, error: "db_error", detail: result.error.message },
+        { status: 500 }
+      );
+    }
+
+    if (!result.data) {
+      return NextResponse.json(
+        { ok: false, error: "not_found", id },
+        { status: 404 }
+      );
+    }
+
+    const item = result.data;
+    const title = String(item.title || "").trim();
+
+    if (title.startsWith("[TEST]") || hiddenPreFilter(item.pre_filter)) {
+      return NextResponse.json(
+        { ok: false, error: "not_found", id },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      item,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "invalid_id", id: id ?? "" },
-      { status: 400 }
-    );
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from("events")
-    .select("id, source, title, url, published_at, created_at")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json(
-      { ok: false, error: "db_error", detail: error.message },
+      { ok: false, error: e?.message || "unknown_error" },
       { status: 500 }
     );
   }
-
-  if (!data) {
-    return NextResponse.json(
-      { ok: false, error: "not_found", id },
-      { status: 404 }
-    );
-  }
-
-  return NextResponse.json({ ok: true, item: data });
 }
