@@ -29,7 +29,22 @@ type EventRow = {
   risk_note: string | null;
   pre_filter: string | null;
   is_active: boolean | null;
+
+  detail_body: string | null;
+  reward_rate_text: string | null;
+  reward_cap_text: string | null;
+  min_deposit_text: string | null;
+  required_action: string | null;
+  event_start_at: string | null;
+  event_end_at: string | null;
+  payout_text: string | null;
+  expected_profit_note: string | null;
+
   raw?: any;
+};
+
+const CACHE_HEADERS = {
+  "cache-control": "public, s-maxage=300, stale-while-revalidate=1800",
 };
 
 function isUuid(v: string) {
@@ -50,6 +65,8 @@ function hiddenPreFilter(v: unknown) {
     "maintenance",
     "listing_notice",
     "terms_or_policy",
+    "airdrop_like_for_later",
+    "region_restricted_or_unclear",
   ].includes(pf);
 }
 
@@ -62,11 +79,10 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     if (!id || !isUuid(id)) {
       return NextResponse.json(
         { ok: false, error: "invalid_id", id: id ?? "" },
-        { status: 400 }
+        { status: 400, headers: CACHE_HEADERS }
       );
     }
 
-    // Supabase 타입 생성 파일이 새 컬럼을 모를 수 있어서 any로 우회
     const result = (await (supabaseAdmin.from("events") as any)
       .select(
         [
@@ -80,6 +96,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
           "modified_at",
           "created_at",
           "updated_at",
+
           "grade_hint",
           "reward_certainty",
           "reward_type",
@@ -92,6 +109,17 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
           "risk_note",
           "pre_filter",
           "is_active",
+
+          "detail_body",
+          "reward_rate_text",
+          "reward_cap_text",
+          "min_deposit_text",
+          "required_action",
+          "event_start_at",
+          "event_end_at",
+          "payout_text",
+          "expected_profit_note",
+
           "raw",
         ].join(",")
       )
@@ -104,14 +132,14 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     if (result.error) {
       return NextResponse.json(
         { ok: false, error: "db_error", detail: result.error.message },
-        { status: 500 }
+        { status: 500, headers: CACHE_HEADERS }
       );
     }
 
     if (!result.data) {
       return NextResponse.json(
         { ok: false, error: "not_found", id },
-        { status: 404 }
+        { status: 404, headers: CACHE_HEADERS }
       );
     }
 
@@ -121,19 +149,22 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     if (title.startsWith("[TEST]") || hiddenPreFilter(item.pre_filter)) {
       return NextResponse.json(
         { ok: false, error: "not_found", id },
-        { status: 404 }
+        { status: 404, headers: CACHE_HEADERS }
       );
     }
 
-    return NextResponse.json({
-      ok: true,
-      item,
-      updatedAt: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        item,
+        updatedAt: new Date().toISOString(),
+      },
+      { headers: CACHE_HEADERS }
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "unknown_error" },
-      { status: 500 }
+      { status: 500, headers: CACHE_HEADERS }
     );
   }
 }

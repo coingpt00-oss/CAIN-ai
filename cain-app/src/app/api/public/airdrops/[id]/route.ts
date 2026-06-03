@@ -5,37 +5,47 @@ import { supabaseAdmin } from "@/lib/supabase-service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const CACHE_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "public, s-maxage=300, stale-while-revalidate=1800",
+};
+
 function j(status: number, body: any) {
   return new NextResponse(JSON.stringify(body), {
     status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
+    headers: CACHE_HEADERS,
   });
 }
 
-// ✅ Next 16에서 params가 Promise일 수도 있어서 안전하게 처리
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
+function hiddenPreFilter(v: unknown) {
+  const pf = String(v || "").trim().toLowerCase();
+
+  return [
+    "legacy_worker_disabled",
+    "manual_hide",
+    "menu_or_junk",
+    "low_confidence",
+  ].includes(pf);
+}
+
+// Next 16에서 params가 Promise일 수도 있어서 안전하게 처리
 type Ctx = { params: { id: string } } | { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   try {
     const { id } = await Promise.resolve((ctx as any).params);
 
-    if (!id) {
-      return j(400, { ok: false, error: "missing_id" });
+    if (!id || !isUuid(id)) {
+      return j(400, { ok: false, error: "invalid_id", id: id ?? "" });
     }
 
-    /**
-     * ✅ 실서비스 공개 상세 기준:
-     * 목록과 동일하게 airdrops_public 뷰에서 읽는다.
-     *
-     * 이유:
-     * - C등급 / manual_hide / 잡데이터가 상세 URL로 직접 접근되는 것 방지
-     * - 공개 가능한 A/B 후보만 상세페이지 노출
-     */
-    const { data, error } = await supabaseAdmin
-      .from("airdrops_public")
+    const result = (await (supabaseAdmin.from("airdrops") as any)
       .select(
         [
           "id",
@@ -50,6 +60,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
           "exchange",
           "link_url",
+          "canonical_url",
           "chain",
           "countries",
 
@@ -61,6 +72,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
           "reward_token",
           "reward_usd_lo",
           "reward_usd_hi",
+          "reward_hint",
           "reward_detail",
 
           "kyc_required",
@@ -84,18 +96,22 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
         ].join(",")
       )
       .eq("id", id)
-      .maybeSingle();
+      .maybeSingle()) as {
+      data: Record<string, any> | null;
+      error: { message?: string } | null;
+    };
 
-    if (error) {
-      console.error("[airdrops:id] supabase error:", error);
+    if (result.error) {
+      console.error("[airdrops:id] supabase error:", result.error);
+
       return j(500, {
         ok: false,
         error: "supabase_error",
-        detail: error,
+        detail: result.error,
       });
     }
 
-    if (!data) {
+    if (!result.data || hiddenPreFilter(result.data.pre_filter)) {
       return j(404, {
         ok: false,
         error: "not_found",
@@ -104,11 +120,12 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
     return j(200, {
       ok: true,
-      item: data,
+      item: result.data,
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
     console.error("[airdrops:id] unexpected error:", err);
+
     return j(500, {
       ok: false,
       error: "unexpected_error",

@@ -1,4 +1,4 @@
-// src/app/api/public/events/route.ts
+﻿// src/app/api/public/events/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-service";
 
@@ -29,6 +29,20 @@ type EventRow = {
   risk_note: string | null;
   pre_filter: string | null;
   is_active: boolean | null;
+
+  detail_body: string | null;
+  reward_rate_text: string | null;
+  reward_cap_text: string | null;
+  min_deposit_text: string | null;
+  required_action: string | null;
+  event_start_at: string | null;
+  event_end_at: string | null;
+  payout_text: string | null;
+  expected_profit_note: string | null;
+};
+
+const CACHE_HEADERS = {
+  "cache-control": "public, s-maxage=120, stale-while-revalidate=900",
 };
 
 function norm(v: unknown) {
@@ -51,6 +65,8 @@ function isHiddenJunk(row: EventRow) {
     "maintenance",
     "listing_notice",
     "terms_or_policy",
+    "airdrop_like_for_later",
+    "region_restricted_or_unclear",
   ].includes(pf);
 }
 
@@ -85,23 +101,23 @@ function shouldExposeEvent(row: EventRow, mode: string) {
   if (mode === "live") return live;
   if (mode === "notice") return notice;
 
-  // all 모드: 진행 이벤트 + 지급/결과 안내 모두 노출
   return live || notice;
 }
 
 export async function GET(req: NextRequest) {
   try {
     const u = new URL(req.url);
+
     const limit = Math.min(
       Math.max(Number(u.searchParams.get("limit") || "50"), 1),
       200
     );
+
     const source = (u.searchParams.get("source") || "").trim().toLowerCase();
     const mode = (u.searchParams.get("mode") || "all").trim().toLowerCase();
 
-    const fetchLimit = Math.min(Math.max(limit * 5, 100), 500);
+    const fetchLimit = Math.min(Math.max(limit * 5, 120), 600);
 
-    // Supabase 타입 생성 파일이 새 컬럼을 모를 수 있어서 any로 우회
     let q: any = (supabaseAdmin.from("events") as any)
       .select(
         [
@@ -115,6 +131,7 @@ export async function GET(req: NextRequest) {
           "modified_at",
           "created_at",
           "updated_at",
+
           "grade_hint",
           "reward_certainty",
           "reward_type",
@@ -127,11 +144,22 @@ export async function GET(req: NextRequest) {
           "risk_note",
           "pre_filter",
           "is_active",
+
+          "detail_body",
+          "reward_rate_text",
+          "reward_cap_text",
+          "min_deposit_text",
+          "required_action",
+          "event_start_at",
+          "event_end_at",
+          "payout_text",
+          "expected_profit_note",
         ].join(",")
       )
       .eq("is_event", true)
-      .order("updated_at", { ascending: false, nullsFirst: false })
+      // 목록의 우측 시간은 공지 시간 기준이므로 published_at 우선 정렬
       .order("published_at", { ascending: false, nullsFirst: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .limit(fetchLimit);
 
@@ -145,7 +173,7 @@ export async function GET(req: NextRequest) {
     if (result.error) {
       return NextResponse.json(
         { ok: false, error: result.error.message || "db_error" },
-        { status: 500 }
+        { status: 500, headers: CACHE_HEADERS }
       );
     }
 
@@ -153,16 +181,19 @@ export async function GET(req: NextRequest) {
       .filter((row) => shouldExposeEvent(row, mode))
       .slice(0, limit);
 
-    return NextResponse.json({
-      ok: true,
-      items: rows,
-      mode,
-      updatedAt: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        items: rows,
+        mode,
+        updatedAt: new Date().toISOString(),
+      },
+      { headers: CACHE_HEADERS }
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "unknown_error" },
-      { status: 500 }
+      { status: 500, headers: CACHE_HEADERS }
     );
   }
 }
