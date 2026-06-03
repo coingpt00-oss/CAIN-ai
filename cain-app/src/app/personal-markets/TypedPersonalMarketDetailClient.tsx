@@ -809,6 +809,8 @@ const EXCHANGE_NAME_MAP: Record<string, string> = {
   coinbase: "Coinbase",
   upbit: "Upbit",
   bithumb: "Bithumb",
+  coinone: "Coinone",
+  korbit: "Korbit",
 };
 
 const EXCHANGE_ICON_BASE_MAP: Record<string, string> = {
@@ -820,6 +822,8 @@ const EXCHANGE_ICON_BASE_MAP: Record<string, string> = {
   coinbase: "coinbase",
   upbit: "upbit",
   bithumb: "bithumb",
+  coinone: "coinone",
+  korbit: "korbit",
 };
 
 function titleCaseExchange(raw: string) {
@@ -859,7 +863,7 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
 }
 
 const GLOBAL_EXCHANGE_ORDER = ["binance", "bitget", "bybit", "okx", "kraken", "coinbase"];
-const DOMESTIC_EXCHANGE_ORDER = ["upbit", "bithumb"];
+const DOMESTIC_EXCHANGE_ORDER = ["upbit", "bithumb", "coinone", "korbit"];
 
 function getExchangeBaseName(rawName: string) {
   const lower = String(rawName || "").trim().toLowerCase();

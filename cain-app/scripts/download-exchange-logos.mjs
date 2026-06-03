@@ -37,6 +37,14 @@ const TARGETS = {
     ids: ["bithumb"],
     names: ["bithumb"],
   },
+  coinone: {
+    ids: ["coinone"],
+    names: ["coinone", "coin one"],
+  },
+  korbit: {
+    ids: ["korbit"],
+    names: ["korbit"],
+  },
 };
 
 function extFromContentType(contentType = "") {
@@ -93,7 +101,9 @@ async function downloadFile(url, outBaseName) {
 
 function findExchange(exchanges, target) {
   for (const id of target.ids) {
-    const found = exchanges.find((ex) => String(ex.id || "").toLowerCase() === id);
+    const found = exchanges.find(
+      (ex) => String(ex.id || "").toLowerCase() === id
+    );
     if (found) return found;
   }
 
@@ -111,11 +121,17 @@ async function main() {
   await fs.mkdir(OUT_DIR, { recursive: true });
 
   const all = [];
+
   for (let page = 1; page <= 4; page += 1) {
     const url = `https://api.coingecko.com/api/v3/exchanges?per_page=250&page=${page}`;
     const rows = await fetchJson(url);
+
     if (!Array.isArray(rows) || !rows.length) break;
+
     all.push(...rows);
+
+    // CoinGecko API 과호출 방지
+    await new Promise((resolve) => setTimeout(resolve, 700));
   }
 
   console.log(`Loaded ${all.length} exchanges from CoinGecko`);
@@ -139,7 +155,10 @@ async function main() {
 
     try {
       const saved = await downloadFile(found.image, key);
-      console.log(`OK ${key}: ${found.id} / ${found.name} -> ${saved.outPath} (${saved.bytes} bytes)`);
+
+      console.log(
+        `OK ${key}: ${found.id} / ${found.name} -> ${saved.outPath} (${saved.bytes} bytes)`
+      );
 
       manifest[key] = {
         ok: true,
@@ -152,6 +171,7 @@ async function main() {
       };
     } catch (e) {
       console.log(`FAIL ${key}: ${e.message}`);
+
       manifest[key] = {
         ok: false,
         reason: e.message,
