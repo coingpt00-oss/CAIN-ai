@@ -1,7 +1,7 @@
-//src/components/NewsThumb.tsx
+// src/components/NewsThumb.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Props = {
   src?: string | null;
@@ -20,21 +20,35 @@ export default function NewsThumb({
 }: Props) {
   const [imgSrc, setImgSrc] = useState(src || fallbackSrc);
 
+  useEffect(() => {
+    setImgSrc(src || fallbackSrc);
+  }, [src, fallbackSrc]);
+
   return (
-    <div className={`relative aspect-square w-24 shrink-0 overflow-hidden rounded-xl bg-black/30 ring-1 ring-white/10 ${className}`}>
-      {/* 정사각형 + 꽉 채우기 */}
+    <div
+      className={[
+        "relative shrink-0 overflow-hidden rounded-xl bg-black/30 ring-1 ring-white/10",
+        className,
+      ].join(" ")}
+      style={{
+        width: 96,
+        minWidth: 96,
+        height: 96,
+      }}
+    >
       <img
         src={imgSrc}
         alt={alt || sourceLabel}
-        className="absolute inset-0 h-full w-full object-cover"
+        className="h-full w-full object-cover"
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setImgSrc(fallbackSrc)}  // ✅ 폴백 이미지
+        onError={() => {
+          if (imgSrc !== fallbackSrc) setImgSrc(fallbackSrc);
+        }}
       />
 
-      {/* 출처 라벨 */}
-      <span className="absolute bottom-1.5 right-1.5 text-[10px] text-white/70 bg-black/50 px-1.5 py-0.5 rounded-md">
+      <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] leading-none text-white/75">
         {sourceLabel}
       </span>
     </div>
