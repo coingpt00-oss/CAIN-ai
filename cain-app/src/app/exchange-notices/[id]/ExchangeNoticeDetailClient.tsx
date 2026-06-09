@@ -68,6 +68,42 @@ function exchangeLabel(v?: string | null) {
   return "UNKNOWN";
 }
 
+function exchangePillClass(v?: string | null) {
+  const k = exchangeKey(v);
+  if (k === "binance") return "border-[#F0B90B]/70 bg-[#F0B90B]/14 text-[#F0B90B]";
+  if (k === "bybit") return "border-[#263454]/80 bg-[#111A2E] text-white";
+  if (k === "okx") return "border-white/75 bg-black text-white";
+  if (k === "bitget") return "border-[#22E6F1]/75 bg-[#22E6F1]/14 text-[#22E6F1]";
+  if (k === "upbit") return "border-[#0052D9]/70 bg-[#0052D9]/18 text-[#5EA2FF]";
+  if (k === "bithumb") return "border-[#FF7A00]/75 bg-[#FF7A00]/18 text-[#FF8A1E]";
+  if (k === "coinone") return "border-[#0C6BFF]/70 bg-[#0C6BFF]/14 text-[#59B6FF]";
+  if (k === "korbit") return "border-black bg-white text-black";
+  return "border-white/10 bg-white/[0.05] text-white/70";
+}
+
+function ExchangePillLabel({ exchange }: { exchange?: string | null }) {
+  const k = exchangeKey(exchange);
+  const label = exchangeLabel(exchange);
+
+  if (k === "bybit") {
+    return (
+      <>
+        BYB<span className="text-[#F5B51B]">I</span>T
+      </>
+    );
+  }
+
+  if (k === "coinone") {
+    return (
+      <span className="bg-gradient-to-r from-[#2A63FF] via-[#1F9BFF] to-[#58D2FF] bg-clip-text text-transparent">
+        COINONE
+      </span>
+    );
+  }
+
+  return <>{label}</>;
+}
+
 function categoryLabel(v?: string | null) {
   const k = norm(v);
   if (k === "deposit_withdrawal") return "입출금";
@@ -338,8 +374,8 @@ export default function ExchangeNoticeDetailClient({ id }: { id: string }) {
 
         <section className="rounded-3xl border border-white/10 bg-black/40 p-5 md:p-7">
           <div className="flex flex-wrap items-center gap-2">
-            <Chip className="border-[rgba(18,203,255,0.35)] bg-[rgba(18,203,255,0.08)] text-[var(--brand)]">
-              {exchangeLabel(item.exchange)}
+            <Chip className={`${exchangePillClass(item.exchange)} font-bold tracking-wide`}>
+              <ExchangePillLabel exchange={item.exchange} />
             </Chip>
             <Chip className={sev.cls}>{sev.label}</Chip>
             <Chip className="border-white/10 bg-white/[0.05] text-white/65">{categoryLabel(item.category)}</Chip>

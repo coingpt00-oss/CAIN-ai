@@ -129,6 +129,29 @@ function exchangePillClass(v?: string | null) {
   return "border-white/10 bg-white/[0.05] text-white/70";
 }
 
+function ExchangePillLabel({ exchange }: { exchange?: string | null }) {
+  const k = exchangeKey(exchange);
+  const label = exchangeLabel(exchange);
+
+  if (k === "bybit") {
+    return (
+      <>
+        BYB<span className="text-[#F5B51B]">I</span>T
+      </>
+    );
+  }
+
+  if (k === "coinone") {
+    return (
+      <span className="bg-gradient-to-r from-[#2A63FF] via-[#1F9BFF] to-[#58D2FF] bg-clip-text text-transparent">
+        COINONE
+      </span>
+    );
+  }
+
+  return <>{label}</>;
+}
+
 function categoryLabel(v?: string | null) {
   const k = norm(v);
   if (k === "deposit_withdrawal") return "입출금";
@@ -505,9 +528,9 @@ export default function ExchangeNoticesPage() {
                           hoverKey={hoverTooltipKey}
                           setActiveKey={setActiveTooltipKey}
                           setHoverKey={setHoverTooltipKey}
-                          className={exchangePillClass(it.exchange)}
+                          className={`${exchangePillClass(it.exchange)} font-bold tracking-wide`}
                         >
-                          {exchangeLabel(it.exchange)}
+                          <ExchangePillLabel exchange={it.exchange} />
                         </TooltipChip>
 
                         <TooltipChip
