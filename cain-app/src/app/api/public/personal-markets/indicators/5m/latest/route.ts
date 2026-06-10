@@ -1,3 +1,4 @@
+// src/app/api/public/personal-markets/indicators/5m/latest/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-service";
 
@@ -10,10 +11,37 @@ const CACHE_WORKER_KEY = process.env.CAIN_CACHE_WORKER_KEY!;
 
 // 캐시 키(고정)
 const CACHE_KEY = "markets_indicators_5m_latest";
-const TTL_SECONDS = 30; // 30초 캐시 (원하면 60도 OK)
+const TTL_SECONDS = 30; // Cache Worker 30초 캐시
+
+// Vercel CDN 캐시: 함수 호출 자체를 줄이기 위한 2차 방어
+const BROWSER_CACHE = "public, max-age=0, must-revalidate";
+const CDN_CACHE = "public, s-maxage=30, stale-while-revalidate=90";
+
+function cachedJson(status: number, body: any, extraHeaders?: Record<string, string>) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "cache-control": BROWSER_CACHE,
+      "cdn-cache-control": CDN_CACHE,
+      "vercel-cdn-cache-control": CDN_CACHE,
+      ...(extraHeaders || {}),
+    },
+  });
+}
+
+function noStoreJson(status: number, body: any, extraHeaders?: Record<string, string>) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      ...(extraHeaders || {}),
+    },
+  });
+}
 
 async function cacheGet() {
   const r = await fetch(`${CACHE_WORKER_URL}/cache/get?key=${encodeURIComponent(CACHE_KEY)}`, {
+    cache: "no-store",
     headers: { "x-cain-cache-key": CACHE_WORKER_KEY },
   });
   if (!r.ok) return null;
@@ -25,6 +53,7 @@ async function cacheGet() {
 async function cacheSet(value: any) {
   await fetch(`${CACHE_WORKER_URL}/cache/set`, {
     method: "POST",
+    cache: "no-store",
     headers: {
       "content-type": "application/json",
       "x-cain-cache-key": CACHE_WORKER_KEY,
@@ -35,14 +64,20 @@ async function cacheSet(value: any) {
 
 export async function GET(_req: NextRequest) {
   try {
-    // 1) 캐시 히트면 Supabase 안 감
+    // 1) Cache Worker 히트면 Supabase 안 감
     const hit = await cacheGet();
     if (hit) {
-      return NextResponse.json({ ok: true, cached: true, ...hit });
+      return cachedJson(
+        200,
+        { ok: true, cached: true, ...hit },
+        {
+          "x-cain-cache": "worker-hit, cdn",
+          "x-cain-upstream": "cache-worker",
+        }
+      );
     }
 
-    // 2) 캐시 미스면 Supabase에서 최신 ts 기준으로 가져오기
-    // 최신 ts 찾기
+    // 2) Cache Worker 미스면 Supabase에서 최신 ts 기준으로 가져오기
     const { data: maxRow, error: maxErr } = await supabaseAdmin
       .from("markets_indicators_5m")
       .select("ts")
@@ -51,10 +86,18 @@ export async function GET(_req: NextRequest) {
       .maybeSingle();
 
     if (maxErr) throw new Error(maxErr.message);
+
     if (!maxRow?.ts) {
       const empty = { ts: null, rows: [] };
       await cacheSet(empty);
-      return NextResponse.json({ ok: true, cached: false, ...empty });
+      return cachedJson(
+        200,
+        { ok: true, cached: false, ...empty },
+        {
+          "x-cain-cache": "worker-miss, cdn",
+          "x-cain-upstream": "supabase",
+        }
+      );
     }
 
     const ts = maxRow.ts;
@@ -70,11 +113,22 @@ export async function GET(_req: NextRequest) {
 
     const payload = { ts, rows: rows || [] };
 
-    // 3) 캐시에 저장
+    // 3) Cache Worker에 저장
     await cacheSet(payload);
 
-    return NextResponse.json({ ok: true, cached: false, ...payload });
+    return cachedJson(
+      200,
+      { ok: true, cached: false, ...payload },
+      {
+        "x-cain-cache": "worker-miss, cdn",
+        "x-cain-upstream": "supabase",
+      }
+    );
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    return noStoreJson(
+      500,
+      { ok: false, error: String(e?.message || e) },
+      { "x-cain-upstream": "exception" }
+    );
   }
 }

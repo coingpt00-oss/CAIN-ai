@@ -2,10 +2,36 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 const WORKER_BASE =
   process.env.NEXT_PUBLIC_MARKETS_API_BASE ||
   "https://cain-markets-worker.coingpt00.workers.dev";
+
+const BROWSER_CACHE = "public, max-age=0, must-revalidate";
+const CDN_CACHE = "public, s-maxage=60, stale-while-revalidate=300";
+
+function cachedJson(status: number, body: any, extraHeaders?: Record<string, string>) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "cache-control": BROWSER_CACHE,
+      "cdn-cache-control": CDN_CACHE,
+      "vercel-cdn-cache-control": CDN_CACHE,
+      ...(extraHeaders || {}),
+    },
+  });
+}
+
+function noStoreJson(status: number, body: any, extraHeaders?: Record<string, string>) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      ...(extraHeaders || {}),
+    },
+  });
+}
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -15,20 +41,25 @@ export async function GET(req: NextRequest) {
   const target = `${WORKER_BASE}/api/markets-global${search}`;
 
   try {
-    const res = await fetch(target, { cache: "no-store" });
-    const data = await res.json();
-
-    return NextResponse.json(data, {
-      status: res.status,
+    const res = await fetch(target, {
+      cache: "no-store",
       headers: {
-        "x-from": "cain-markets-worker",
+        accept: "application/json",
       },
+    });
+
+    const data = await res.json().catch(() => null);
+
+    return cachedJson(res.status, data ?? { ok: false, error: "invalid_worker_json" }, {
+      "x-from": "cain-markets-worker",
+      "x-cain-cache": "cdn",
     });
   } catch (e) {
     console.error("markets/global proxy error", e);
-    return NextResponse.json(
+    return noStoreJson(
+      500,
       { ok: false, error: "markets_global_proxy_failed" },
-      { status: 500 },
+      { "x-from": "cain-markets-worker" }
     );
   }
 }
