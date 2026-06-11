@@ -11,8 +11,7 @@ export default function CommunityPage() {
         <header className="mb-8">
           <h1 className="text-3xl md:text-4xl font-semibold mb-2">커뮤니티</h1>
           <p className="text-sm md:text-base text-white/60">
-            코인시장 이야기, 투자 후기, 전략 공유까지.{" "}
-            <span className="text-[var(--brand)] font-medium">NEO 님 환영합니다.</span>
+            코인시장 이야기, 투자 후기, 전략 공유까지. CAIN 커뮤니티에서 자유롭게 의견을 나눠보세요.
           </p>
         </header>
 

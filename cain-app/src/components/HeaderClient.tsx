@@ -62,7 +62,7 @@ const navItems: NavItem[] = [
   { name: "커뮤니티", href: "/community", premium: true },
   { name: "에어드랍", href: "/airdrops", gated: true, premium: true },
   { name: "이벤트", href: "/events", gated: true, premium: true },
-  { name: "거래소 공지", href: "/exchange-notices" },
+  { name: "거래소 공지", href: "/exchange-notices", gated: true, premium: true },
 ];
 
 export default function HeaderClient() {
@@ -135,7 +135,7 @@ export default function HeaderClient() {
   };
 
   const gateMessage = useMemo(() => {
-    return "코인시세 / 에어드랍 / 이벤트는 인증 회원에게만 제공됩니다. 로그인 또는 회원가입 후 이용하실 수 있습니다.";
+    return "코인시세 / 에어드랍 / 이벤트 / 거래소 공지는 인증 회원에게만 제공됩니다. 로그인 또는 회원가입 후 이용하실 수 있습니다.";
   }, []);
 
   const ProfileMenu = () => (

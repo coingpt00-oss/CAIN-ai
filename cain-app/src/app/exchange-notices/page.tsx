@@ -1,6 +1,7 @@
 ﻿// src/app/exchange-notices/page.tsx
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -90,6 +91,58 @@ const SEVERITIES = [
   { key: "medium", label: "Medium" },
   { key: "low", label: "Low" },
 ];
+
+
+function hasLocalCainUser() {
+  try {
+    if (typeof window === "undefined") return false;
+
+    const raw = window.localStorage.getItem("cain_user");
+    if (!raw) return false;
+
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.uid || parsed?.username);
+  } catch {
+    return false;
+  }
+}
+
+function LoginRequiredForExchangeNotices() {
+  return (
+    <main className="w-full px-4 py-10 md:px-8">
+      <section className="mx-auto max-w-3xl rounded-3xl border border-[rgba(18,203,255,0.28)] bg-black/45 p-6 md:p-8">
+        <div className="inline-flex rounded-full border border-[rgba(18,203,255,0.35)] bg-[rgba(18,203,255,0.08)] px-4 py-1.5 text-sm font-semibold text-[var(--brand)]">
+          CAIN PREMIUM
+        </div>
+
+        <h1 className="mt-5 text-2xl font-semibold text-white md:text-3xl">
+          거래소 공지는 인증 회원 전용입니다.
+        </h1>
+
+        <p className="mt-3 text-sm leading-7 text-white/60 md:text-base">
+          입출금 중단, 상장, 상장폐지, 점검, 보안 공지는 CAIN 인증 회원에게만 제공됩니다.
+          로그인 또는 회원가입 후 이용해주십시오.
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <Link
+            href="/login?next=/exchange-notices"
+            className="inline-flex items-center justify-center rounded-full bg-[var(--brand)] px-5 py-3 text-sm font-semibold text-black hover:opacity-90"
+          >
+            로그인하고 거래소 공지 열기
+          </Link>
+
+          <Link
+            href="/register"
+            className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/80 hover:bg-white/[0.08]"
+          >
+            회원가입
+          </Link>
+        </div>
+      </section>
+    </main>
+  );
+}
 
 function norm(v?: string | null) {
   return String(v || "").trim().toLowerCase();
@@ -361,10 +414,17 @@ export default function ExchangeNoticesPage() {
   const [q, setQ] = useState("");
   const [activeTooltipKey, setActiveTooltipKey] = useState<string | null>(null);
   const [hoverTooltipKey, setHoverTooltipKey] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
 
   const activeTab = useMemo(() => {
     return CATEGORY_TABS.find((x) => x.key === category) || CATEGORY_TABS[0];
   }, [category]);
+
+  useEffect(() => {
+    setIsAuthed(hasLocalCainUser());
+    setAuthChecked(true);
+  }, []);
 
   useEffect(() => {
     const close = () => {
@@ -376,6 +436,8 @@ export default function ExchangeNoticesPage() {
   }, []);
 
   useEffect(() => {
+    if (!authChecked || !isAuthed) return;
+
     let mounted = true;
 
     async function run() {
@@ -400,7 +462,21 @@ export default function ExchangeNoticesPage() {
     return () => {
       mounted = false;
     };
-  }, [category, exchange, severity, q]);
+  }, [authChecked, isAuthed, category, exchange, severity, q]);
+
+  if (!authChecked) {
+    return (
+      <main className="w-full px-4 py-10 md:px-8">
+        <section className="mx-auto max-w-3xl rounded-3xl border border-white/10 bg-black/45 p-6 text-sm text-white/60">
+          거래소 공지 접근 권한을 확인하는 중입니다.
+        </section>
+      </main>
+    );
+  }
+
+  if (!isAuthed) {
+    return <LoginRequiredForExchangeNotices />;
+  }
 
   return (
     <main className="w-full px-3 py-8 md:px-5">
