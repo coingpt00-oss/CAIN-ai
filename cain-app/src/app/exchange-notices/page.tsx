@@ -93,11 +93,28 @@ const SEVERITIES = [
 ];
 
 
+function getLocalCainToken() {
+  try {
+    if (typeof window === "undefined") return "";
+    return String(window.localStorage.getItem("cain_token") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function buildAuthHeaders(): HeadersInit {
+  const token = getLocalCainToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function hasLocalCainUser() {
   try {
     if (typeof window === "undefined") return false;
 
     const raw = window.localStorage.getItem("cain_user");
+    const token = getLocalCainToken();
+
+    if (token) return true;
     if (!raw) return false;
 
     const parsed = JSON.parse(raw);
@@ -444,7 +461,10 @@ export default function ExchangeNoticesPage() {
       try {
         setLoading(true);
         setErr(null);
-        const res = await fetch(buildUrl({ category, exchange, severity, q }));
+        const res = await fetch(buildUrl({ category, exchange, severity, q }), {
+          headers: buildAuthHeaders(),
+          cache: "no-store",
+        });
         const json = (await res.json()) as ApiResponse;
         if (!json?.ok) throw new Error(json?.error || "fetch_failed");
         if (!mounted) return;

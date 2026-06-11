@@ -281,6 +281,20 @@ function Chip({ children, className = "" }: { children: React.ReactNode; classNa
   return <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${className}`}>{children}</span>;
 }
 
+function getLocalCainToken() {
+  try {
+    if (typeof window === "undefined") return "";
+    return String(window.localStorage.getItem("cain_token") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function buildAuthHeaders(): HeadersInit {
+  const token = getLocalCainToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export default function ExchangeNoticeDetailClient({ id }: { id: string }) {
   const [item, setItem] = useState<NoticeItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -294,7 +308,10 @@ export default function ExchangeNoticeDetailClient({ id }: { id: string }) {
         setLoading(true);
         setErr(null);
 
-        const res = await fetch(`/api/public/exchange-notices/${encodeURIComponent(id)}`);
+        const res = await fetch(`/api/public/exchange-notices/${encodeURIComponent(id)}`, {
+          headers: buildAuthHeaders(),
+          cache: "no-store",
+        });
         const json = (await res.json()) as ApiResponse;
 
         if (!json.ok) throw new Error(json.error || "fetch_failed");

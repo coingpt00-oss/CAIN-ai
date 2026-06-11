@@ -20,27 +20,6 @@ const ProfileIcon = ({ className = "" }: { className?: string }) => (
   </svg>
 );
 
-const MenuIcon = ({ className = "" }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
-    <path
-      d="M4 7h16M4 12h16M4 17h16"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    />
-  </svg>
-);
-
-const CloseIcon = ({ className = "" }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
-    <path
-      d="M6 6l12 12M18 6L6 18"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    />
-  </svg>
-);
 
 type CainUser = {
   uid: string;
@@ -260,15 +239,11 @@ export default function HeaderClient() {
             <button
               type="button"
               onClick={handleMobileMenuClick}
-              className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/15 grid place-items-center text-[var(--brand)]"
+              className="h-10 min-w-[58px] rounded-full bg-white/10 hover:bg-white/15 grid place-items-center px-3 text-sm font-semibold text-[var(--brand)]"
               aria-label="mobile menu"
               aria-expanded={mobileMenuOpen}
             >
-              {mobileMenuOpen ? (
-                <CloseIcon className="w-5 h-5" />
-              ) : (
-                <MenuIcon className="w-5 h-5" />
-              )}
+              {mobileMenuOpen ? "닫기" : "메뉴"}
             </button>
 
             {open && <ProfileMenu />}
