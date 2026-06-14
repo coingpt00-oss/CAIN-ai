@@ -1,4 +1,5 @@
 // src/app/layout.tsx
+import type { ReactNode } from "react";
 import "./globals.css";
 import HeaderClient from "@/components/HeaderClient";
 import Footer from "@/components/Footer";
@@ -12,10 +13,18 @@ export const metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <html lang="ko">
+      <head>
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6729558233753700"
+          crossOrigin="anonymous"
+        />
+      </head>
+
       <body className="min-h-dvh bg-black text-white">
         {/* ===== 전역 시세/글로벌 정보 Provider ===== */}
         <MarketsProvider>
