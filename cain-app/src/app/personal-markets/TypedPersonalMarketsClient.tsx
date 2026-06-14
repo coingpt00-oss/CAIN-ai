@@ -1861,6 +1861,51 @@ function DesktopTable({
   );
 }
 
+function MobileSparkline({
+  points,
+  stroke = COLOR_BRAND_STROKE,
+}: {
+  points: number[] | null | undefined;
+  stroke?: string;
+}) {
+  if (!hasSparkline(points)) {
+    return <div className="text-right text-xs text-white/30">-</div>;
+  }
+
+  const width = 88;
+  const height = 28;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+
+  const path = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * width;
+      const y = height - ((p - min) / range) * height;
+      return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-7 w-[88px] overflow-visible"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path
+        d={path}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity="0.95"
+      />
+    </svg>
+  );
+}
+
 function MobileCards({
   items,
   type,
@@ -1886,231 +1931,128 @@ function MobileCards({
   favoriteBusySymbol: string | null;
   onToggleFavorite: (symbol: string) => void;
 }) {
+  // PC 테이블은 그대로 두고, 모바일에서는 CMC식 압축 리스트만 보여줍니다.
+  // 아래 값들은 상세페이지에서 다루기 위해 메인 모바일 목록에서는 의도적으로 숨깁니다.
+  void premiumDisplayMode;
+  void basisDisplayMode;
+  void spotChangeMode;
+  void spotSizeMode;
+
   return (
-    <div className="grid gap-3 xl:hidden">
-      {items.map((item, idx) => {
-        const fx =
-          n((item as SpotIndicator).rate_krw_usd) ||
-          n((item as DomesticGlobalIndicator).rate_krw_usd) ||
-          n((item as FuturesSpotIndicator).rate_krw_usd) ||
-          fxFallback;
+    <div className="xl:hidden overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(86px,0.72fr)_92px] items-center border-b border-white/10 bg-black/60 px-3 py-2 text-[11px] font-medium text-white/45">
+        <div>코인</div>
+        <div className="text-right">가격</div>
+        <div className="text-right">7일</div>
+      </div>
 
-        const spotSpark =
-          currencyMode === "KRW"
-            ? (item as SpotIndicator).sparkline_krw
-            : (item as SpotIndicator).sparkline_usd;
+      <div className="divide-y divide-white/[0.07]">
+        {items.map((item, idx) => {
+          const fx =
+            n((item as SpotIndicator).rate_krw_usd) ||
+            n((item as DomesticGlobalIndicator).rate_krw_usd) ||
+            n((item as FuturesSpotIndicator).rate_krw_usd) ||
+            fxFallback;
 
-        const dgSpark = (item as DomesticGlobalIndicator).sparkline_gap;
-        const futuresSpark = (item as FuturesSpotIndicator).sparkline_basis;
+          const spotSpark =
+            currencyMode === "KRW"
+              ? (item as SpotIndicator).sparkline_krw
+              : (item as SpotIndicator).sparkline_usd;
 
-        const normalizedSymbol = normalizeFavoriteSymbol(item.symbol);
-        const isFavorite = favoriteSet.has(normalizedSymbol);
-        const favoriteBusy = favoriteBusySymbol === normalizedSymbol;
+          const dgSpark = (item as DomesticGlobalIndicator).sparkline_gap;
+          const futuresSpark = (item as FuturesSpotIndicator).sparkline_basis;
 
-        return (
-          <div
-            key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
-            className="rounded-2xl border border-white/10 bg-black/40 p-4 hover:bg-black/60"
-          >
-            <div className="flex items-start justify-between gap-3">
+          const sparkPoints =
+            type === "spot" ? spotSpark : type === "domestic-global" ? dgSpark : futuresSpark;
+
+          const priceText =
+            type === "spot"
+              ? getSpotPriceText(item as SpotIndicator, currencyMode, fx)
+              : type === "domestic-global"
+              ? formatPriceByCurrency(
+                  null,
+                  (item as DomesticGlobalIndicator).domestic_avg_krw,
+                  fx,
+                  currencyMode
+                )
+              : formatPriceByCurrency(
+                  (item as FuturesSpotIndicator).global_spot_avg_usd,
+                  null,
+                  fx,
+                  currencyMode
+                );
+
+          const priceSubLabel =
+            type === "spot" ? "현재가" : type === "domestic-global" ? "국내 평균가" : "현물 평균가";
+
+          const normalizedSymbol = normalizeFavoriteSymbol(item.symbol);
+          const isFavorite = favoriteSet.has(normalizedSymbol);
+          const favoriteBusy = favoriteBusySymbol === normalizedSymbol;
+          const rankName = item.rank_name || item.canonical_symbol || "";
+          const rankText = hasNum(item.market_cap_rank) ? `#${Number(item.market_cap_rank)}` : "";
+
+          return (
+            <div
+              key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
+              className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_minmax(86px,0.72fr)_92px] items-center gap-2 px-3 py-2.5 hover:bg-white/[0.03]"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <FavoriteButton
+                  active={isFavorite}
+                  busy={favoriteBusy}
+                  onToggle={() => onToggleFavorite(item.symbol)}
+                />
+
+                <Link
+                  href={`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`}
+                  className="flex min-w-0 items-center gap-2"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-black/60">
+                    {item.icon_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.icon_url} alt={item.symbol} className="h-7 w-7 object-contain" />
+                    ) : (
+                      <span className="text-[10px] font-semibold text-white/55">
+                        {item.symbol?.slice(0, 3)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-sm font-semibold text-white">{item.symbol}</span>
+                      {rankText ? (
+                        <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-white/45">
+                          {rankText}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-white/45">{rankName || "-"}</div>
+                  </div>
+                </Link>
+              </div>
+
               <Link
                 href={`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`}
-                className="min-w-0 flex-1"
+                className="min-w-0 text-right"
               >
-                <CoinCell item={item} />
+                <div className="truncate text-sm font-semibold text-[var(--brand)]">{priceText}</div>
+                <div className="mt-0.5 text-[10px] text-white/35">{priceSubLabel}</div>
               </Link>
-              <FavoriteButton
-                active={isFavorite}
-                busy={favoriteBusy}
-                onToggle={() => onToggleFavorite(item.symbol)}
-              />
-            </div>
 
-            <Link
-              href={`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`}
-              className="block"
-            >
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {type === "spot" ? (
-                <>
-                  <MetricCell
-                    top={getSpotPriceText(item as SpotIndicator, currencyMode, fx)}
-                    bottom="가격"
-                    topClassName={COLOR_BRAND_TEXT}
-                  />
-                  <MetricCell
-                    top={fmtPct(getSpotChangeValue(item as SpotIndicator, spotChangeMode), 3)}
-                    bottom={getSpotChangeLabel(spotChangeMode)}
-                    topClassName={getSignedTextClass(
-                      getSpotChangeValue(item as SpotIndicator, spotChangeMode)
-                    )}
-                  />
-                  <MetricCell
-                    top={
-                      spotSizeMode === "volume"
-                        ? getSpotVolumeText(item as SpotIndicator, currencyMode, fx)
-                        : getSpotMarketCapText(item as SpotIndicator, currencyMode, fx)
-                    }
-                    bottom={getSpotSizeLabel(spotSizeMode)}
-                    topClassName={COLOR_BRAND_TEXT}
-                  />
-                  <MetricCell
-                    top={fmtPct((item as SpotIndicator).global_spread_pct, 3)}
-                    bottom={
-                      currencyMode === "KRW" && fx > 0
-                        ? `분산 · ${fmtKrw(n((item as SpotIndicator).global_spread_usd) * fx)}`
-                        : `분산 · ${fmtUsd((item as SpotIndicator).global_spread_usd, 2)}`
-                    }
-                    topClassName={getSpotSpreadTextClass()}
-                  />
-                  <MetricCell
-                    top={fmtPct((item as SpotIndicator).volatility_ratio, 3)}
-                    bottom={`변동성 · ${getVolatilityStatusText(item as SpotIndicator)}`}
-                    topClassName={getVolatilityTextClass()}
-                    bottomClassName={getVolatilityStatusTextClass(item as SpotIndicator)}
-                  />
-                  <MetricCell
-                    top={getSpotDeviationValue(item as SpotIndicator, fx, currencyMode).diffText}
-                    bottom={`최대 이탈 · ${getSpotDeviationValue(item as SpotIndicator, fx, currencyMode).name}`}
-                    topClassName={COLOR_BRAND_TEXT}
-                  />
-                  <div className="sm:col-span-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                    <div className="mb-2 text-[11px] text-white/60">최근 평균가 7일</div>
-                    <Sparkline
-                      points={spotSpark}
-                      stroke={getSparklineStrokeByPoints(spotSpark)}
-                    />
-                  </div>
-                </>
-              ) : type === "domestic-global" ? (
-                <>
-                  <MetricCell
-                    top={formatPriceByCurrency(
-                      null,
-                      (item as DomesticGlobalIndicator).domestic_avg_krw,
-                      fx,
-                      currencyMode
-                    )}
-                    bottom="국내 평균가"
-                    topClassName={COLOR_WHITE_TEXT}
-                  />
-                  <MetricCell
-                    top={formatPriceByCurrency(
-                      (item as DomesticGlobalIndicator).global_spot_avg_usd,
-                      (item as DomesticGlobalIndicator).global_spot_avg_krw,
-                      fx,
-                      currencyMode
-                    )}
-                    bottom="해외 평균가"
-                    topClassName={COLOR_YELLOW_TEXT}
-                  />
-                  <MetricCell
-                    top={getDomesticDominanceText(item as DomesticGlobalIndicator)}
-                    bottom="우세"
-                    topClassName={getDominanceTextClass(item as DomesticGlobalIndicator)}
-                  />
-                  <MetricCell
-                    top={
-                      premiumDisplayMode === "pct"
-                        ? fmtPct((item as DomesticGlobalIndicator).premium_pct, 3)
-                        : getDomesticGapText(
-                            item as DomesticGlobalIndicator,
-                            currencyMode,
-                            fx
-                          )
-                    }
-                    bottom={premiumDisplayMode === "pct" ? "괴리율" : "가격차"}
-                    topClassName={getSignedTextClass((item as DomesticGlobalIndicator).premium_pct)}
-                  />
-                  <MetricCell
-                    top={
-                      currencyMode === "KRW"
-                        ? fmtKrw(getDomesticSpreadKrw(item as DomesticGlobalIndicator))
-                        : fx > 0
-                        ? fmtUsd(getDomesticSpreadKrw(item as DomesticGlobalIndicator) / fx, 2)
-                        : "-"
-                    }
-                    bottom="국내분산"
-                    topClassName={COLOR_BRAND_TEXT}
-                  />
-                  <MetricCell
-                    top={
-                      currencyMode === "KRW"
-                        ? fmtKrw(getGlobalSpreadKrw(item as DomesticGlobalIndicator))
-                        : fx > 0
-                        ? fmtUsd(getGlobalSpreadKrw(item as DomesticGlobalIndicator) / fx, 2)
-                        : "-"
-                    }
-                    bottom="해외분산"
-                    topClassName={COLOR_WHITE_TEXT}
-                  />
-                  <div className="sm:col-span-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                    <div className="mb-2 text-[11px] text-white/60">괴리율 추이 3일</div>
-                    <Sparkline
-                      points={dgSpark}
-                      stroke={getSparklineStrokeByPoints(dgSpark)}
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <MetricCell
-                    top={formatPriceByCurrency(
-                      (item as FuturesSpotIndicator).global_spot_avg_usd,
-                      null,
-                      fx,
-                      currencyMode
-                    )}
-                    bottom="현물 평균가"
-                    topClassName={COLOR_WHITE_TEXT}
-                  />
-                  <MetricCell
-                    top={formatPriceByCurrency(
-                      (item as FuturesSpotIndicator).global_futures_avg_usd,
-                      null,
-                      fx,
-                      currencyMode
-                    )}
-                    bottom="선물 평균가"
-                    topClassName={COLOR_BRAND_TEXT}
-                  />
-                  <MetricCell
-                    top={
-                      basisDisplayMode === "pct"
-                        ? fmtPct(getFuturesBasisPct(item as FuturesSpotIndicator), 3)
-                        : getFuturesGapText(
-                            item as FuturesSpotIndicator,
-                            fx,
-                            currencyMode
-                          )
-                    }
-                    bottom={
-                      basisDisplayMode === "pct"
-                        ? `베이시스 · ${getFuturesSideText(item as FuturesSpotIndicator)}`
-                        : `가격차 · ${getFuturesSideText(item as FuturesSpotIndicator)}`
-                    }
-                    topClassName={getSignedTextClass(getFuturesBasisPct(item as FuturesSpotIndicator))}
-                    bottomClassName={getFuturesSideTextClass(item as FuturesSpotIndicator)}
-                  />
-                  <MetricCell
-                    top={fmtPct((item as FuturesSpotIndicator).delay_proxy, 3)}
-                    bottom="지연"
-                    topClassName={COLOR_WHITE_TEXT}
-                  />
-                  <div className="sm:col-span-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                    <div className="mb-2 text-[11px] text-white/60">베이시스 추이 3일</div>
-                    <Sparkline
-                      points={futuresSpark}
-                      stroke={getSparklineStrokeByPoints(futuresSpark)}
-                    />
-                  </div>
-                </>
-              )}
-              </div>
-            </Link>
-          </div>
-        );
-      })}
+              <Link
+                href={`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`}
+                className="flex justify-end"
+              >
+                <MobileSparkline
+                  points={sparkPoints}
+                  stroke={getSparklineStrokeByPoints(sparkPoints)}
+                />
+              </Link>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

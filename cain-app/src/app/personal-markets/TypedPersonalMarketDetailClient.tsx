@@ -2347,6 +2347,233 @@ function SpotMarketSnapshot({ item, chartData }: { item: AnyIndicator; chartData
   );
 }
 
+
+function MobileDetailMetricCard({
+  label,
+  value,
+  sub,
+  valueClassName,
+  children,
+}: {
+  label: string;
+  value?: string;
+  sub?: string;
+  valueClassName?: string;
+  children?: ReactNode;
+}) {
+  const inferredClassName =
+    valueClassName ||
+    (String(value || "").trim().startsWith("+") || String(value || "").trim().startsWith("-")
+      ? signedTextClassFromRaw(value)
+      : "text-white");
+
+  return (
+    <div className="min-h-[72px] rounded-xl border border-white/10 bg-black/60 p-3">
+      <div className="text-[11px] text-white/45">{label}</div>
+      {children ? (
+        <div className="mt-2">{children}</div>
+      ) : (
+        <div className={`mt-1 truncate text-sm font-semibold ${inferredClassName}`}>{value || "-"}</div>
+      )}
+      {sub ? <div className="mt-1 truncate text-[11px] text-white/40">{sub}</div> : null}
+    </div>
+  );
+}
+
+function MobileDetailOverviewShell({
+  title,
+  description,
+  right,
+  children,
+}: {
+  title: string;
+  description: string;
+  right?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-black/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-[var(--brand)]">{title}</div>
+          <div className="mt-1 text-[11px] leading-5 text-white/50">{description}</div>
+        </div>
+        {right ? <div className="shrink-0">{right}</div> : null}
+      </div>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+function MobileSpotDetailOverview({
+  item,
+  chartData,
+}: {
+  item: AnyIndicator;
+  chartData: ChartRes | null;
+}) {
+  const [displayUnit, setDisplayUnit] = useState<CurrencyMode>("KRW");
+  const fx = n(item.rate_krw_usd);
+  const spotRows = item.exchanges?.global_spot_usd || [];
+  const fallbackUsd = n(item.global_avg_usd) || avg(spotRows.map((row) => row.price));
+  const priceUsd = getSpotRepresentativePriceUsd(item, fallbackUsd);
+  const priceKrw = getSpotRepresentativePriceKrw(item, priceUsd, fx);
+  const marketCapUsd = getSpotMarketCapUsd(item, priceUsd, fx);
+  const volumeUsd = getSpotVolumeUsd(item);
+  const sparkPoints = getSpotSparkPoints(item, chartData, displayUnit, fx);
+
+  const avgUsd = n(item.global_avg_usd) || avg(spotRows.map((row) => row.price));
+  let maxDeviationUsd = 0;
+  let maxDeviationName = "-";
+
+  for (const row of spotRows) {
+    const diff = Math.abs(n(row.price) - avgUsd);
+    if (diff > maxDeviationUsd) {
+      maxDeviationUsd = diff;
+      maxDeviationName = getExchangeMeta(row.name).label;
+    }
+  }
+
+  const formatByUnit = (usdValue: number, krwValue?: number) => {
+    if (displayUnit === "KRW") {
+      const resolvedKrw = Number.isFinite(Number(krwValue)) ? n(krwValue) : fx > 0 ? usdValue * fx : 0;
+      return resolvedKrw > 0 ? fmtKrw(resolvedKrw) : "-";
+    }
+    return usdValue > 0 ? fmtUsd(usdValue, 2) : "-";
+  };
+
+  const deviationText =
+    displayUnit === "KRW" && fx > 0 ? fmtKrw(maxDeviationUsd * fx) : fmtUsd(maxDeviationUsd, 4);
+
+  return (
+    <MobileDetailOverviewShell
+      title="모바일 핵심 지표"
+      description="메인 목록에서 숨긴 등락률·시총·거래량·분산·변동성·최대 이탈을 여기서 한눈에 봅니다."
+      right={<CurrencyInlineToggle value={displayUnit} onChange={setDisplayUnit} />}
+    >
+      <div className="rounded-xl border border-[color:rgba(0,229,255,0.22)] bg-black/60 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] text-white/45">현재가</div>
+            <div className="mt-1 truncate text-xl font-semibold text-[var(--brand)]">
+              {formatByUnit(priceUsd, priceKrw)}
+            </div>
+            <div className="mt-1 text-[11px] text-white/40">
+              {getSpotMarketCapRank(item)} · 거래소 {spotRows.length}개 기준
+            </div>
+          </div>
+
+          <div className="w-[116px] shrink-0">
+            <MiniSparkline points={sparkPoints} />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MobileDetailMetricCard label="시가총액" value={formatByUnit(marketCapUsd)} />
+        <MobileDetailMetricCard label="24H 거래량" value={formatByUnit(volumeUsd)} />
+        <MobileDetailMetricCard
+          label="1H"
+          value={getSpotChangeValue(item, "1h") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "1h"), 3)}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "1h"), 3))}
+        />
+        <MobileDetailMetricCard
+          label="24H"
+          value={getSpotChangeValue(item, "24h") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "24h"), 3)}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "24h"), 3))}
+        />
+        <MobileDetailMetricCard
+          label="7D"
+          value={getSpotChangeValue(item, "7d") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "7d"), 3)}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "7d"), 3))}
+        />
+        <MobileDetailMetricCard
+          label="분산"
+          value={fmtPct(item.global_spread_pct, 3)}
+          sub={displayUnit === "KRW" && fx > 0 ? fmtKrw(n(item.global_spread_usd) * fx) : fmtUsd(item.global_spread_usd, 4)}
+          valueClassName="text-[var(--brand)]"
+        />
+        <MobileDetailMetricCard
+          label="변동성"
+          value={fmtPct(item.volatility_ratio, 3)}
+          sub={item.volatility_warn ? "주의" : "안정"}
+          valueClassName={item.volatility_warn ? "text-[#ef4444]" : "text-[#22c55e]"}
+        />
+        <MobileDetailMetricCard
+          label="최대 이탈"
+          value={deviationText}
+          sub={maxDeviationName}
+          valueClassName="text-[var(--brand)]"
+        />
+      </div>
+    </MobileDetailOverviewShell>
+  );
+}
+
+function MobileDomesticGlobalOverview({ item }: { item: AnyIndicator }) {
+  const domesticRows = item.exchanges?.domestic_krw || [];
+  const globalRows = item.exchanges?.global_spot_usd || [];
+  const premium = n(item.premium_pct);
+  const sideText = premium > 0 ? "국내 우위" : premium < 0 ? "해외 우위" : "중립";
+  const globalGapKrw = n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
+
+  return (
+    <MobileDetailOverviewShell
+      title="모바일 핵심 지표"
+      description="국내/해외 가격 차이와 거래소 분산을 먼저 확인합니다."
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <MobileDetailMetricCard
+          label="괴리율"
+          value={fmtSignedPct(item.premium_pct, 3)}
+          sub={sideText}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(item.premium_pct, 3))}
+        />
+        <MobileDetailMetricCard
+          label="실제 원화 차이"
+          value={fmtSignedKrw(globalGapKrw)}
+          sub="국내-해외 환산"
+        />
+        <MobileDetailMetricCard label="국내 평균가" value={fmtKrw(item.domestic_avg_krw)} sub={`${domesticRows.length}개 거래소`} />
+        <MobileDetailMetricCard label="해외 환산 평균가" value={fmtKrw(item.global_spot_avg_krw)} sub={`환율 ${fmtKrw(item.rate_krw_usd)}`} />
+        <MobileDetailMetricCard label="국내 내부 분산" value={fmtKrw(item.domestic_spread_krw)} sub={`${domesticRows.length}개 거래소`} valueClassName="text-[var(--brand)]" />
+        <MobileDetailMetricCard label="해외 거래소 수" value={`${globalRows.length}개`} sub="현물 기준" valueClassName="text-[var(--brand)]" />
+      </div>
+    </MobileDetailOverviewShell>
+  );
+}
+
+function MobileFuturesSpotOverview({ item }: { item: AnyIndicator }) {
+  const spotRows = item.exchanges?.global_spot_usd || [];
+  const futuresRows = item.exchanges?.global_futures_usd || [];
+  const spotAvg = n(item.global_spot_avg_usd);
+  const futuresAvg = n(item.global_futures_avg_usd);
+  const priceGap = futuresAvg - spotAvg;
+  const basis = n(item.basis_pct);
+  const sideText = basis >= 0 ? "선물 프리미엄" : "선물 할인";
+
+  return (
+    <MobileDetailOverviewShell
+      title="모바일 핵심 지표"
+      description="선물과 현물의 가격 차이, 베이시스, 지연 상태를 먼저 확인합니다."
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <MobileDetailMetricCard
+          label="베이시스"
+          value={fmtSignedPct(item.basis_pct, 3)}
+          sub={sideText}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(item.basis_pct, 3))}
+        />
+        <MobileDetailMetricCard label="실제 달러 가격차" value={fmtSignedUsd(priceGap, 6)} sub="선물-현물" />
+        <MobileDetailMetricCard label="현물 평균가" value={fmtUsd(item.global_spot_avg_usd, 6)} sub={`${spotRows.length}개 거래소`} />
+        <MobileDetailMetricCard label="선물 평균가" value={fmtUsd(item.global_futures_avg_usd, 6)} sub={`${futuresRows.length}개 거래소`} />
+        <MobileDetailMetricCard label="동조/지연" value={fmtPct(item.delay_proxy, 3)} sub="현물·선물 반응 차이" valueClassName="text-[var(--brand)]" />
+        <MobileDetailMetricCard label="거래소 수" value={`${spotRows.length}/${futuresRows.length}개`} sub="현물/선물" valueClassName="text-[var(--brand)]" />
+      </div>
+    </MobileDetailOverviewShell>
+  );
+}
+
 function SpotDetail({
   item,
   chartData,
@@ -2369,35 +2596,56 @@ function SpotDetail({
   const extremes = getExtremes(spotRows);
 
   return (
-    <div className="grid gap-4">
-      <SpotMarketSnapshot item={item} chartData={chartData} />
+    <>
+      <div className="grid gap-3 xl:hidden">
+        <MobileSpotDetailOverview item={item} chartData={chartData} />
 
-      <ChartWorkspace
-        marketType="spot"
-        item={item}
-        symbol={symLabel(item.symbol)}
-        chartData={chartData}
-        chartLoading={chartLoading}
-        chartRefreshing={chartRefreshing}
-        chartRange={chartRange}
-        setChartRange={setChartRange}
-      />
+        <ChartWorkspace
+          marketType="spot"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
 
-      <SummaryStrip
-        items={[
-          { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("spot", item) },
-          { label: "글로벌 평균가", value: fmtUsd(item.global_avg_usd, 6), sub: `거래소 ${spotRows.length}개 기준` },
-          { label: "거래소 벌어짐", value: fmtPct(item.global_spread_pct, 3), sub: fmtUsd(item.global_spread_usd, 6) },
-          { label: "최고-최저 차이", value: fmtUsd(extremes.spread, 6), sub: `${getExchangeMeta(extremes.highest?.name || "").label || "-"} ↔ ${getExchangeMeta(extremes.lowest?.name || "").label || "-"} · ${fmtPct(maxGapPct, 3)}` },
-          { label: "단기 흔들림", value: fmtPct(item.volatility_ratio, 3), sub: item.volatility_warn ? "주의 플래그 ON" : "주의 플래그 OFF" },
-          { label: "경고 상태", value: item.volatility_warn ? "주의" : "양호", sub: `거래소 ${spotRows.length}개 기준` },
-        ]}
-      />
+        <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
 
-      <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
+        <SpotPlanCalculator item={item} />
+      </div>
 
-      <SpotPlanCalculator item={item} />
-    </div>
+      <div className="hidden gap-4 xl:grid">
+        <SpotMarketSnapshot item={item} chartData={chartData} />
+
+        <ChartWorkspace
+          marketType="spot"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
+
+        <SummaryStrip
+          items={[
+            { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("spot", item) },
+            { label: "글로벌 평균가", value: fmtUsd(item.global_avg_usd, 6), sub: `거래소 ${spotRows.length}개 기준` },
+            { label: "거래소 벌어짐", value: fmtPct(item.global_spread_pct, 3), sub: fmtUsd(item.global_spread_usd, 6) },
+            { label: "최고-최저 차이", value: fmtUsd(extremes.spread, 6), sub: `${getExchangeMeta(extremes.highest?.name || "").label || "-"} ↔ ${getExchangeMeta(extremes.lowest?.name || "").label || "-"} · ${fmtPct(maxGapPct, 3)}` },
+            { label: "단기 흔들림", value: fmtPct(item.volatility_ratio, 3), sub: item.volatility_warn ? "주의 플래그 ON" : "주의 플래그 OFF" },
+            { label: "경고 상태", value: item.volatility_warn ? "주의" : "양호", sub: `거래소 ${spotRows.length}개 기준` },
+          ]}
+        />
+
+        <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
+
+        <SpotPlanCalculator item={item} />
+      </div>
+    </>
   );
 }
 
@@ -2429,37 +2677,61 @@ function DomesticGlobalDetail({
   );
 
   return (
-    <div className="grid gap-4">
-      <ChartWorkspace
-        marketType="domestic-global"
-        item={item}
-        symbol={symLabel(item.symbol)}
-        chartData={chartData}
-        chartLoading={chartLoading}
-        chartRefreshing={chartRefreshing}
-        chartRange={chartRange}
-        setChartRange={setChartRange}
-      />
+    <>
+      <div className="grid gap-3 xl:hidden">
+        <MobileDomesticGlobalOverview item={item} />
 
-      <SummaryStrip
-        items={[
-          { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("domestic-global", item) },
-          { label: "괴리율", value: fmtSignedPct(item.premium_pct, 3), sub: sideText },
-          { label: "실제 원화 차이", value: fmtSignedKrw(globalGapKrw), sub: "국내 평균가 - 해외 환산 평균가" },
-          { label: "국내 평균가", value: fmtKrw(item.domestic_avg_krw), sub: `국내 거래소 ${domesticRows.length}개` },
-          { label: "해외 환산 평균가", value: fmtKrw(item.global_spot_avg_krw), sub: `환율 ${fmtKrw(item.rate_krw_usd)}` },
-          { label: "괴리율 vs 24h 평균", value: premiumPosition.value, sub: premiumPosition.sub },
-          { label: "국내 내부 분산", value: fmtKrw(item.domestic_spread_krw), sub: `국내 거래소 ${domesticRows.length}개` },
-        ]}
-      />
+        <ChartWorkspace
+          marketType="domestic-global"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <ExchangeList title="국내 거래소 가격" rows={domesticRows} unit="KRW" rate={item.rate_krw_usd} />
-        <ExchangeList title="해외 현물 거래소 가격" rows={globalRows} unit="USD" rate={item.rate_krw_usd} />
+        <div className="grid gap-3">
+          <ExchangeList title="국내 거래소 가격" rows={domesticRows} unit="KRW" rate={item.rate_krw_usd} />
+          <ExchangeList title="해외 현물 거래소 가격" rows={globalRows} unit="USD" rate={item.rate_krw_usd} />
+        </div>
+
+        <DomesticArbCalculator item={item} />
       </div>
 
-      <DomesticArbCalculator item={item} />
-    </div>
+      <div className="hidden gap-4 xl:grid">
+        <ChartWorkspace
+          marketType="domestic-global"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
+
+        <SummaryStrip
+          items={[
+            { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("domestic-global", item) },
+            { label: "괴리율", value: fmtSignedPct(item.premium_pct, 3), sub: sideText },
+            { label: "실제 원화 차이", value: fmtSignedKrw(globalGapKrw), sub: "국내 평균가 - 해외 환산 평균가" },
+            { label: "국내 평균가", value: fmtKrw(item.domestic_avg_krw), sub: `국내 거래소 ${domesticRows.length}개` },
+            { label: "해외 환산 평균가", value: fmtKrw(item.global_spot_avg_krw), sub: `환율 ${fmtKrw(item.rate_krw_usd)}` },
+            { label: "괴리율 vs 24h 평균", value: premiumPosition.value, sub: premiumPosition.sub },
+            { label: "국내 내부 분산", value: fmtKrw(item.domestic_spread_krw), sub: `국내 거래소 ${domesticRows.length}개` },
+          ]}
+        />
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <ExchangeList title="국내 거래소 가격" rows={domesticRows} unit="KRW" rate={item.rate_krw_usd} />
+          <ExchangeList title="해외 현물 거래소 가격" rows={globalRows} unit="USD" rate={item.rate_krw_usd} />
+        </div>
+
+        <DomesticArbCalculator item={item} />
+      </div>
+    </>
   );
 }
 
@@ -2493,37 +2765,61 @@ function FuturesSpotDetail({
   );
 
   return (
-    <div className="grid gap-4">
-      <ChartWorkspace
-        marketType="futures-spot"
-        item={item}
-        symbol={symLabel(item.symbol)}
-        chartData={chartData}
-        chartLoading={chartLoading}
-        chartRefreshing={chartRefreshing}
-        chartRange={chartRange}
-        setChartRange={setChartRange}
-      />
+    <>
+      <div className="grid gap-3 xl:hidden">
+        <MobileFuturesSpotOverview item={item} />
 
-      <SummaryStrip
-        items={[
-          { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("futures-spot", item) },
-          { label: "베이시스", value: fmtSignedPct(item.basis_pct, 3), sub: sideText },
-          { label: "실제 달러 가격차", value: fmtSignedUsd(priceGap, 6), sub: "선물 평균가 - 현물 평균가" },
-          { label: "현물 평균가", value: fmtUsd(item.global_spot_avg_usd, 6), sub: `현물 ${spotRows.length}개` },
-          { label: "선물 평균가", value: fmtUsd(item.global_futures_avg_usd, 6), sub: `선물 ${futuresRows.length}개` },
-          { label: "베이시스 vs 24h 평균", value: basisPosition.value, sub: basisPosition.sub },
-          { label: "동조/지연", value: fmtPct(item.delay_proxy, 3), sub: `현물 ${spotRows.length}개 / 선물 ${futuresRows.length}개` },
-        ]}
-      />
+        <ChartWorkspace
+          marketType="futures-spot"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
-        <ExchangeList title="글로벌 선물 거래소 가격" rows={futuresRows} unit="USD" rate={item.rate_krw_usd} />
+        <div className="grid gap-3">
+          <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
+          <ExchangeList title="글로벌 선물 거래소 가격" rows={futuresRows} unit="USD" rate={item.rate_krw_usd} />
+        </div>
+
+        <FuturesBasisCalculator item={item} />
       </div>
 
-      <FuturesBasisCalculator item={item} />
-    </div>
+      <div className="hidden gap-4 xl:grid">
+        <ChartWorkspace
+          marketType="futures-spot"
+          item={item}
+          symbol={symLabel(item.symbol)}
+          chartData={chartData}
+          chartLoading={chartLoading}
+          chartRefreshing={chartRefreshing}
+          chartRange={chartRange}
+          setChartRange={setChartRange}
+        />
+
+        <SummaryStrip
+          items={[
+            { label: "현재 상태", value: item.state || "-", sub: stateSummaryText("futures-spot", item) },
+            { label: "베이시스", value: fmtSignedPct(item.basis_pct, 3), sub: sideText },
+            { label: "실제 달러 가격차", value: fmtSignedUsd(priceGap, 6), sub: "선물 평균가 - 현물 평균가" },
+            { label: "현물 평균가", value: fmtUsd(item.global_spot_avg_usd, 6), sub: `현물 ${spotRows.length}개` },
+            { label: "선물 평균가", value: fmtUsd(item.global_futures_avg_usd, 6), sub: `선물 ${futuresRows.length}개` },
+            { label: "베이시스 vs 24h 평균", value: basisPosition.value, sub: basisPosition.sub },
+            { label: "동조/지연", value: fmtPct(item.delay_proxy, 3), sub: `현물 ${spotRows.length}개 / 선물 ${futuresRows.length}개` },
+          ]}
+        />
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <ExchangeList title="글로벌 현물 거래소 가격" rows={spotRows} unit="USD" rate={item.rate_krw_usd} />
+          <ExchangeList title="글로벌 선물 거래소 가격" rows={futuresRows} unit="USD" rate={item.rate_krw_usd} />
+        </div>
+
+        <FuturesBasisCalculator item={item} />
+      </div>
+    </>
   );
 }
 
