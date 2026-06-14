@@ -483,12 +483,12 @@ function getClientAuthToken() {
   }
 
   const legacy = getCookieValue("cain_token");
-  if (legacy && legacy.trim()) return legacy.trim();
+  if (legacy) return legacy.trim();
 
   try {
     if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("cain_token");
-      if (stored && stored.trim()) return stored.trim();
+      const localToken = window.localStorage.getItem("cain_token");
+      if (localToken && localToken.trim()) return localToken.trim();
     }
   } catch {}
 
@@ -2363,6 +2363,28 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
             <div className="flex flex-wrap items-center gap-2 md:hidden">
               <span className="text-[11px] text-white/60">가격 단위</span>
               <CurrencyInlineToggle value={currencyMode} onChange={setCurrencyMode} />
+              {marketType === "domestic-global" ? (
+                <>
+                  <span className="ml-2 text-[11px] text-white/60">괴리 표시</span>
+                  <MiniModeToggle
+                    value={premiumDisplayMode}
+                    leftLabel="%"
+                    rightLabel="₩"
+                    onChange={setPremiumDisplayMode}
+                  />
+                </>
+              ) : null}
+              {marketType === "futures-spot" ? (
+                <>
+                  <span className="ml-2 text-[11px] text-white/60">베이시스 표시</span>
+                  <MiniModeToggle
+                    value={basisDisplayMode}
+                    leftLabel="%"
+                    rightLabel="₩"
+                    onChange={setBasisDisplayMode}
+                  />
+                </>
+              ) : null}
             </div>
           </div>
         </div>

@@ -1045,6 +1045,36 @@ function CurrencyInlineToggle({
   );
 }
 
+
+function MobileSegmentedToggle<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="inline-flex items-center overflow-hidden rounded-full border border-[color:rgba(0,229,255,0.32)] bg-black/60">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`px-2 py-0.5 text-[10px] transition ${
+            value === option.value
+              ? "bg-[color:rgba(0,229,255,0.14)] text-[var(--brand)]"
+              : "text-white/70 hover:text-white"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function convertExchangePrice(value: number, baseUnit: "KRW" | "USD", displayUnit: CurrencyMode, fx: number) {
   if (baseUnit === displayUnit) return value;
   if (!fx || fx <= 0) return NaN;
@@ -1147,62 +1177,113 @@ function ExchangeList({
         </div>
       ) : (
         <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/50">
-          <div className="grid grid-cols-[minmax(170px,1.4fr)_minmax(120px,1fr)_minmax(110px,0.9fr)_80px] border-b border-white/10 bg-black/70 px-3 py-2 text-[11px] text-white/55 max-md:hidden">
-            <div>거래소</div>
-            <div className="text-center">가격</div>
-            <div className="text-center">평균 대비</div>
-            <div className="text-center">상태</div>
-          </div>
+          <div className="md:hidden">
+            <div className="grid grid-cols-[minmax(104px,1.15fr)_minmax(88px,0.95fr)_minmax(78px,0.85fr)_42px] border-b border-white/10 bg-black/70 px-2.5 py-2 text-[10px] text-white/45">
+              <div>거래소</div>
+              <div className="text-right">가격</div>
+              <div className="text-right">평균대비</div>
+              <div className="text-right">상태</div>
+            </div>
 
-          <div className="divide-y divide-white/5">
-            {sorted.map((row) => {
-              const meta = getExchangeMeta(row.name);
-              const convertedPrice = convertExchangePrice(row.price, unit, displayUnit, fx);
-              const convertedDelta = convertExchangePrice(row.price - average, unit, displayUnit, fx);
-              const isHighest = highest?.name === row.name && highest?.price === row.price;
-              const isLowest = lowest?.name === row.name && lowest?.price === row.price;
-              const status = isHighest ? "최고" : isLowest ? "최저" : "정상";
-              const statusClass = isHighest
-                ? "text-[#22c55e]"
-                : isLowest
-                  ? "text-[#ef4444]"
-                  : "text-white/65";
+            <div className="divide-y divide-white/5">
+              {sorted.map((row) => {
+                const meta = getExchangeMeta(row.name);
+                const convertedPrice = convertExchangePrice(row.price, unit, displayUnit, fx);
+                const convertedDelta = convertExchangePrice(row.price - average, unit, displayUnit, fx);
+                const isHighest = highest?.name === row.name && highest?.price === row.price;
+                const isLowest = lowest?.name === row.name && lowest?.price === row.price;
+                const status = isHighest ? "최고" : isLowest ? "최저" : "정상";
+                const statusClass = isHighest
+                  ? "text-[#22c55e]"
+                  : isLowest
+                    ? "text-[#ef4444]"
+                    : "text-white/65";
 
-              return (
-                <div
-                  key={row.name}
-                  className="grid items-center gap-3 px-3 py-3 text-sm transition hover:bg-white/[0.03] md:grid-cols-[minmax(170px,1.4fr)_minmax(120px,1fr)_minmax(110px,0.9fr)_80px]"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <ExchangeIcon name={row.name} />
-                    <div className="min-w-0 self-center">
-                      <div className="truncate font-semibold text-white">{meta.label}</div>
+                return (
+                  <div
+                    key={row.name}
+                    className="grid grid-cols-[minmax(104px,1.15fr)_minmax(88px,0.95fr)_minmax(78px,0.85fr)_42px] items-center gap-2 px-2.5 py-2.5 text-xs transition hover:bg-white/[0.03]"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ExchangeIcon name={row.name} />
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-white">{meta.label}</div>
+                      </div>
+                    </div>
+
+                    <div className="truncate text-right font-semibold text-[var(--brand)]">
+                      {formatExchangePrice(convertedPrice, displayUnit)}
+                    </div>
+
+                    <div className={`truncate text-right font-semibold ${convertedDelta > 0 ? "text-[#22c55e]" : convertedDelta < 0 ? "text-[#ef4444]" : "text-white/70"}`}>
+                      {formatExchangeDelta(convertedDelta, displayUnit)}
+                    </div>
+
+                    <div className={`truncate text-right font-semibold ${statusClass}`}>
+                      {status}
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
 
-                  <div className="font-semibold text-[var(--brand)] md:text-center max-md:flex max-md:justify-between max-md:text-left">
-                    <span className="hidden text-[11px] text-white/45 max-md:inline">가격</span>
-                    <span>{formatExchangePrice(convertedPrice, displayUnit)}</span>
-                  </div>
+          <div className="hidden md:block">
+            <div className="grid grid-cols-[minmax(170px,1.4fr)_minmax(120px,1fr)_minmax(110px,0.9fr)_80px] border-b border-white/10 bg-black/70 px-3 py-2 text-[11px] text-white/55">
+              <div>거래소</div>
+              <div className="text-center">가격</div>
+              <div className="text-center">평균 대비</div>
+              <div className="text-center">상태</div>
+            </div>
 
-                  <div className={`text-xs font-semibold md:text-center max-md:flex max-md:justify-between max-md:text-left ${convertedDelta > 0 ? "text-[#22c55e]" : convertedDelta < 0 ? "text-[#ef4444]" : "text-white/70"}`}>
-                    <span className="hidden text-[11px] text-white/45 max-md:inline">평균 대비</span>
-                    <span>{formatExchangeDelta(convertedDelta, displayUnit)}</span>
-                  </div>
+            <div className="divide-y divide-white/5">
+              {sorted.map((row) => {
+                const meta = getExchangeMeta(row.name);
+                const convertedPrice = convertExchangePrice(row.price, unit, displayUnit, fx);
+                const convertedDelta = convertExchangePrice(row.price - average, unit, displayUnit, fx);
+                const isHighest = highest?.name === row.name && highest?.price === row.price;
+                const isLowest = lowest?.name === row.name && lowest?.price === row.price;
+                const status = isHighest ? "최고" : isLowest ? "최저" : "정상";
+                const statusClass = isHighest
+                  ? "text-[#22c55e]"
+                  : isLowest
+                    ? "text-[#ef4444]"
+                    : "text-white/65";
 
-                  <div className={`text-xs font-semibold md:text-center max-md:flex max-md:justify-between max-md:text-left ${statusClass}`}>
-                    <span className="hidden text-[11px] text-white/45 max-md:inline">상태</span>
-                    <span>{status}</span>
+                return (
+                  <div
+                    key={row.name}
+                    className="grid items-center gap-3 px-3 py-3 text-sm transition hover:bg-white/[0.03] md:grid-cols-[minmax(170px,1.4fr)_minmax(120px,1fr)_minmax(110px,0.9fr)_80px]"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ExchangeIcon name={row.name} />
+                      <div className="min-w-0 self-center">
+                        <div className="truncate font-semibold text-white">{meta.label}</div>
+                      </div>
+                    </div>
+
+                    <div className="font-semibold text-[var(--brand)] md:text-center">
+                      <span>{formatExchangePrice(convertedPrice, displayUnit)}</span>
+                    </div>
+
+                    <div className={`text-xs font-semibold md:text-center ${convertedDelta > 0 ? "text-[#22c55e]" : convertedDelta < 0 ? "text-[#ef4444]" : "text-white/70"}`}>
+                      <span>{formatExchangeDelta(convertedDelta, displayUnit)}</span>
+                    </div>
+
+                    <div className={`text-xs font-semibold md:text-center ${statusClass}`}>
+                      <span>{status}</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
     </section>
   );
 }
+
 function NumberField({
   label,
   value,
@@ -1273,9 +1354,79 @@ function SpotPlanCalculator({ item }: { item: AnyIndicator }) {
   const targetPnl = totalQty > 0 ? totalQty * targetPrice - deployed : 0;
   const stopPnl = totalQty > 0 ? totalQty * stopPrice - deployed : 0;
 
+  const mobileResultClass =
+    "rounded-xl border border-white/10 bg-black/60 p-3";
+  const mobileResultValueClass =
+    "mt-1 truncate text-sm font-semibold text-[var(--brand)]";
+
   return (
     <Card title="실전 계산기 · 분할 진입 평균단가" badge="SPOT">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:hidden">
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="총 투자금" value={capital} onChange={setCapital} suffix="USD" />
+          <div className={mobileResultClass}>
+            <div className="text-[11px] opacity-65">실투입 금액</div>
+            <div className={mobileResultValueClass}>{fmtUsd(deployed, 2)}</div>
+            <div className="mt-1 text-[11px] opacity-55">투입 비중 {allocSum.toFixed(1)}%</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="1차 진입가" value={entry1} onChange={setEntry1} suffix="USD" />
+          <NumberField label="1차 비중" value={alloc1} onChange={setAlloc1} suffix="%" />
+          <NumberField label="2차 진입가" value={entry2} onChange={setEntry2} suffix="USD" />
+          <NumberField label="2차 비중" value={alloc2} onChange={setAlloc2} suffix="%" />
+          <NumberField label="3차 진입가" value={entry3} onChange={setEntry3} suffix="USD" />
+          <NumberField label="3차 비중" value={alloc3} onChange={setAlloc3} suffix="%" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className={mobileResultClass}>
+            <div className="text-[11px] opacity-65">예상 평균단가</div>
+            <div className={mobileResultValueClass}>{fmtUsd(avgEntry, 4)}</div>
+          </div>
+          <div className={mobileResultClass}>
+            <div className="text-[11px] opacity-65">예상 보유 수량</div>
+            <div className={mobileResultValueClass}>{totalQty ? totalQty.toFixed(6) : "-"}</div>
+            <div className="mt-1 text-[11px] opacity-55">{symLabel(item.symbol)} 기준</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="목표 매도가" value={targetPrice} onChange={setTargetPrice} suffix="USD" />
+          <div className={mobileResultClass}>
+            <div className="text-[11px] opacity-65">목표가 도달 손익</div>
+            <div className={`mt-1 truncate text-sm font-semibold ${signedTextClassFromRaw(fmtSignedUsd(targetPnl, 2))}`}>
+              {fmtSignedUsd(targetPnl, 2)}
+            </div>
+            {deployed > 0 ? <div className="mt-1 text-[11px] opacity-55">{fmtSignedPct((targetPnl / deployed) * 100, 2)}</div> : null}
+          </div>
+
+          <NumberField label="손절 기준가" value={stopPrice} onChange={setStopPrice} suffix="USD" />
+          <div className={mobileResultClass}>
+            <div className="text-[11px] opacity-65">손절가 도달 손익</div>
+            <div className={`mt-1 truncate text-sm font-semibold ${signedTextClassFromRaw(fmtSignedUsd(stopPnl, 2))}`}>
+              {fmtSignedUsd(stopPnl, 2)}
+            </div>
+            {deployed > 0 ? <div className="mt-1 text-[11px] opacity-55">{fmtSignedPct((stopPnl / deployed) * 100, 2)}</div> : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <ValueCard
+            label="지금 구조 코멘트"
+            value={n(item.global_spread_pct) <= 0.2 ? "체결 구조 양호" : "체결 벌어짐 체크"}
+            sub="현물은 평균단가보다 체결 왜곡 관리가 중요합니다."
+          />
+          <ValueCard
+            label="권장 체크"
+            value="분할 진입 + 거래소 분산"
+            sub="한 거래소 몰빵보다 체결가 안정성이 좋아질 수 있습니다."
+          />
+        </div>
+      </div>
+
+      <div className="hidden gap-3 md:grid md:grid-cols-2 xl:grid-cols-4">
         <NumberField label="총 투자금" value={capital} onChange={setCapital} suffix="USD" />
         <NumberField label="1차 진입가" value={entry1} onChange={setEntry1} suffix="USD" />
         <NumberField label="2차 진입가" value={entry2} onChange={setEntry2} suffix="USD" />
@@ -1287,7 +1438,7 @@ function SpotPlanCalculator({ item }: { item: AnyIndicator }) {
         <NumberField label="손절 기준가" value={stopPrice} onChange={setStopPrice} suffix="USD" />
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 hidden gap-3 md:grid md:grid-cols-2 xl:grid-cols-4">
         <ValueCard label="투입 비중 합" value={`${allocSum.toFixed(1)}%`} sub={allocSum === 100 ? "비중 합 100%" : "비중 합을 100%에 맞추면 계산이 더 직관적입니다."} valueClassName="text-[var(--brand)]" />
         <ValueCard label="실투입 금액" value={fmtUsd(deployed, 2)} valueClassName="text-[var(--brand)]" />
         <ValueCard label="예상 평균단가" value={fmtUsd(avgEntry, 4)} valueClassName="text-[var(--brand)]" />
@@ -1300,6 +1451,7 @@ function SpotPlanCalculator({ item }: { item: AnyIndicator }) {
     </Card>
   );
 }
+
 
 function DomesticArbCalculator({ item }: { item: AnyIndicator }) {
   const defaultDomestic = n(item.domestic_avg_krw);
@@ -2413,6 +2565,9 @@ function MobileSpotDetailOverview({
   chartData: ChartRes | null;
 }) {
   const [displayUnit, setDisplayUnit] = useState<CurrencyMode>("KRW");
+  const [changeMode, setChangeMode] = useState<"1h" | "24h" | "7d">("24h");
+  const [sizeMode, setSizeMode] = useState<"marketcap" | "volume">("marketcap");
+
   const fx = n(item.rate_krw_usd);
   const spotRows = item.exchanges?.global_spot_usd || [];
   const fallbackUsd = n(item.global_avg_usd) || avg(spotRows.map((row) => row.price));
@@ -2442,17 +2597,45 @@ function MobileSpotDetailOverview({
     return usdValue > 0 ? fmtUsd(usdValue, 2) : "-";
   };
 
+  const selectedChange = getSpotChangeValue(item, changeMode);
+  const selectedSizeUsd = sizeMode === "volume" ? volumeUsd : marketCapUsd;
+  const selectedSizeLabel = sizeMode === "volume" ? "24H 거래량" : "시가총액";
   const deviationText =
     displayUnit === "KRW" && fx > 0 ? fmtKrw(maxDeviationUsd * fx) : fmtUsd(maxDeviationUsd, 4);
 
   return (
     <MobileDetailOverviewShell
       title="모바일 핵심 지표"
-      description="메인 목록에서 숨긴 등락률·시총·거래량·분산·변동성·최대 이탈을 여기서 한눈에 봅니다."
-      right={<CurrencyInlineToggle value={displayUnit} onChange={setDisplayUnit} />}
+      description="메인 목록에서는 가격과 7일 흐름만 보고, 상세에서 등락률·시총·거래량·분산·변동성·최대 이탈을 확인합니다."
     >
-      <div className="rounded-xl border border-[color:rgba(0,229,255,0.22)] bg-black/60 p-3">
-        <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/50 p-2">
+        <span className="text-[11px] text-white/50">가격</span>
+        <CurrencyInlineToggle value={displayUnit} onChange={setDisplayUnit} />
+
+        <span className="ml-1 text-[11px] text-white/50">변동</span>
+        <MobileSegmentedToggle
+          value={changeMode}
+          options={[
+            { value: "1h", label: "1H" },
+            { value: "24h", label: "24H" },
+            { value: "7d", label: "7D" },
+          ]}
+          onChange={setChangeMode}
+        />
+
+        <span className="ml-1 text-[11px] text-white/50">규모</span>
+        <MobileSegmentedToggle
+          value={sizeMode}
+          options={[
+            { value: "marketcap", label: "시총" },
+            { value: "volume", label: "거래량" },
+          ]}
+          onChange={setSizeMode}
+        />
+      </div>
+
+      <div className="mt-3 rounded-xl border border-[color:rgba(0,229,255,0.22)] bg-black/60 p-3">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[11px] text-white/45">현재가</div>
             <div className="mt-1 truncate text-xl font-semibold text-[var(--brand)]">
@@ -2463,29 +2646,18 @@ function MobileSpotDetailOverview({
             </div>
           </div>
 
-          <div className="flex w-[116px] shrink-0 items-center justify-center self-center">
+          <div className="w-[116px] shrink-0">
             <MiniSparkline points={sparkPoints} />
           </div>
         </div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <MobileDetailMetricCard label="시가총액" value={formatByUnit(marketCapUsd)} />
-        <MobileDetailMetricCard label="24H 거래량" value={formatByUnit(volumeUsd)} />
+        <MobileDetailMetricCard label={selectedSizeLabel} value={formatByUnit(selectedSizeUsd)} />
         <MobileDetailMetricCard
-          label="1H"
-          value={getSpotChangeValue(item, "1h") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "1h"), 3)}
-          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "1h"), 3))}
-        />
-        <MobileDetailMetricCard
-          label="24H"
-          value={getSpotChangeValue(item, "24h") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "24h"), 3)}
-          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "24h"), 3))}
-        />
-        <MobileDetailMetricCard
-          label="7D"
-          value={getSpotChangeValue(item, "7d") === null ? "-" : fmtSignedPct(getSpotChangeValue(item, "7d"), 3)}
-          valueClassName={signedTextClassFromRaw(fmtSignedPct(getSpotChangeValue(item, "7d"), 3))}
+          label={changeMode.toUpperCase()}
+          value={selectedChange === null ? "-" : fmtSignedPct(selectedChange, 3)}
+          valueClassName={signedTextClassFromRaw(fmtSignedPct(selectedChange, 3))}
         />
         <MobileDetailMetricCard
           label="분산"
@@ -2503,6 +2675,12 @@ function MobileSpotDetailOverview({
           label="최대 이탈"
           value={deviationText}
           sub={maxDeviationName}
+          valueClassName="text-[var(--brand)]"
+        />
+        <MobileDetailMetricCard
+          label="시총 순위"
+          value={getSpotMarketCapRank(item)}
+          sub="CoinGecko 기준"
           valueClassName="text-[var(--brand)]"
         />
       </div>
