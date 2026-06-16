@@ -1,5 +1,6 @@
 // src/app/api/public/personal-markets/markets/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,111 @@ function jsonError(message: string, status = 500, detail?: string) {
       },
     }
   );
+}
+
+function normalizeSymbol(value: any) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function toFiniteNumber(value: any) {
+  const x = Number(value);
+  return Number.isFinite(x) ? x : null;
+}
+
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    "";
+
+  if (!url || !key) return null;
+
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+async function enrichSpotChange7d(payload: any) {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  if (!items.length) return payload;
+
+  const supabase = getSupabaseAdmin();
+
+  if (!supabase) {
+    return {
+      ...payload,
+      meta: {
+        ...(payload?.meta || {}),
+        change_7d_enriched: false,
+        change_7d_error: "supabase_env_missing",
+      },
+    };
+  }
+
+  const symbols = Array.from(
+    new Set(
+      items
+        .map((row: any) => normalizeSymbol(row?.symbol_upper || row?.symbol))
+        .filter(Boolean)
+    )
+  );
+
+  if (!symbols.length) return payload;
+
+  const { data, error } = await supabase.rpc("get_pm_period_changes", {
+    p_type: "spot",
+    p_symbols: symbols,
+    p_period: "7d",
+  });
+
+  if (error) {
+    return {
+      ...payload,
+      meta: {
+        ...(payload?.meta || {}),
+        change_7d_enriched: false,
+        change_7d_error: error.message,
+      },
+    };
+  }
+
+  const changeMap = new Map<string, number>();
+
+  for (const row of data || []) {
+    const symbol = normalizeSymbol(row?.symbol);
+    const change = toFiniteNumber(row?.change_pct);
+
+    if (symbol && change !== null) {
+      changeMap.set(symbol, change);
+    }
+  }
+
+  const enrichedItems = items.map((row: any) => {
+    const symbol = normalizeSymbol(row?.symbol_upper || row?.symbol);
+    const change = changeMap.get(symbol);
+
+    if (!Number.isFinite(change)) return row;
+
+    return {
+      ...row,
+      change_7d: change,
+    };
+  });
+
+  return {
+    ...payload,
+    items: enrichedItems,
+    meta: {
+      ...(payload?.meta || {}),
+      change_7d_enriched: true,
+      change_7d_source: "get_pm_period_changes",
+      change_7d_symbols: changeMap.size,
+    },
+  };
 }
 
 function toPublicMarketItem(row: any) {
@@ -154,8 +260,9 @@ export async function GET(req: NextRequest) {
     }
 
     const payload = slimMarketsPayload(data, includeFull);
+    const enrichedPayload = await enrichSpotChange7d(payload);
 
-    return new NextResponse(JSON.stringify(payload), {
+    return new NextResponse(JSON.stringify(enrichedPayload), {
       status: upstream.status,
       headers: {
         "Content-Type": "application/json; charset=utf-8",

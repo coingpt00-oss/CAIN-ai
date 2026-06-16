@@ -1077,10 +1077,8 @@ function getSpotChangeValue(item: SpotIndicator, mode: SpotChangeMode) {
   return getSpotChange24h(item);
 }
 
-function getSpotChangeLabel(mode: SpotChangeMode) {
-  if (mode === "1h") return "1H";
-  if (mode === "7d") return "7D";
-  return "24H";
+function getSpotChangeLabel(_: SpotChangeMode) {
+  return "변동률";
 }
 
 function mergeSpotIndicatorsWithMarkets(
