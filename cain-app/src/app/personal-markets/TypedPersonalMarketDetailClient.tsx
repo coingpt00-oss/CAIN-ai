@@ -1692,8 +1692,18 @@ function appendLivePoint(series: ApiChartSeries, item: AnyIndicator | null): Api
   return series;
 }
 
-function prepareSeries(chartData: ChartRes | null, item: AnyIndicator | null) {
-  return (chartData?.series || []).map((entry) => appendLivePoint(entry, item));
+function prepareSeries(
+  chartData: ChartRes | null,
+  item: AnyIndicator | null,
+  range: RangeKey
+) {
+  const source = chartData?.series || [];
+
+  if (range === "7d" || range === "30d" || range === "90d") {
+    return source;
+  }
+
+  return source.map((entry) => appendLivePoint(entry, item));
 }
 
 function buildViews(type: MarketType, allSeries: ApiChartSeries[]) {
@@ -2184,7 +2194,7 @@ function ChartWorkspace({
   chartRange: RangeKey;
   setChartRange: (value: RangeKey) => void;
 }) {
-  const allSeries = useMemo(() => prepareSeries(chartData, item), [chartData, item]);
+  const allSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const views = useMemo(() => buildViews(marketType, allSeries), [marketType, allSeries]);
   const [activeViewKey, setActiveViewKey] = useState("");
 
@@ -2847,7 +2857,7 @@ function DomesticGlobalDetail({
   const premium = n(item.premium_pct);
   const sideText = premium > 0 ? "국내가 더 높은 편" : premium < 0 ? "해외가 더 높은 편" : "중립";
   const globalGapKrw = n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
-  const preparedSeries = useMemo(() => prepareSeries(chartData, item), [chartData, item]);
+  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const premiumSeries = preparedSeries.find((entry) => entry.key === "premium_pct");
   const premiumPosition = useMemo(
     () => positionVsAverageText(getLastNumericValue(premiumSeries), averageOfSeries(premiumSeries), "percent"),
@@ -2935,7 +2945,7 @@ function FuturesSpotDetail({
   const futuresAvg = n(item.global_futures_avg_usd);
   const priceGap = futuresAvg - spotAvg;
   const sideText = basis >= 0 ? "선물 프리미엄" : "선물 할인";
-  const preparedSeries = useMemo(() => prepareSeries(chartData, item), [chartData, item]);
+  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const basisSeries = preparedSeries.find((entry) => entry.key === "basis_pct");
   const basisPosition = useMemo(
     () => positionVsAverageText(getLastNumericValue(basisSeries), averageOfSeries(basisSeries), "percent"),
