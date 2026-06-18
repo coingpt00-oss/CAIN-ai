@@ -2271,29 +2271,9 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
       try {
         if (marketType === "spot") {
           const isInitialLoad = !hasLoadedRef.current;
-          let topMarketArr: MarketsV2ItemRes[] = [];
-
-          if (isInitialLoad) {
-            const topMarketsRes = await fetch(
-              pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0`)
-            );
-            const topMarketsJson = (await topMarketsRes.json()) as MarketsV2Res;
-
-            if (!topMarketsRes.ok || !topMarketsJson?.ok) {
-              throw new Error("fetch_failed");
-            }
-
-            topMarketArr = Array.isArray(topMarketsJson.items) ? topMarketsJson.items : [];
-            const topArr = topMarketArr.map((row) => normalizeSpotMarketItem(row));
-
-            if (!cancelled) {
-              setItems(topArr);
-              hasLoadedRef.current = true;
-              setLoading(false);
-            }
-          }
 
           const indicatorsPromise = fetch(pmApi(`/indicators?type=spot`));
+          const topMarketsPromise = fetch(pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0`));
           const marketsPromise = isInitialLoad
             ? fetch(pmApi(`/markets?currency=krw&limit=370&offset=30&only_live=0`))
             : fetch(pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0`));
@@ -2307,21 +2287,37 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
             })
             .catch(() => [] as MarketsV2ItemRes[]);
 
-          const [indicatorsRes, marketsRes] = await Promise.all([
+          const [indicatorsRes, topMarketsRes] = await Promise.all([
             indicatorsPromise,
-            marketsPromise,
+            topMarketsPromise,
           ]);
 
           const indicatorsJson = (await indicatorsRes.json()) as ApiRes;
-          const marketsJson = (await marketsRes.json()) as MarketsV2Res;
+          const topMarketsJson = (await topMarketsRes.json()) as MarketsV2Res;
 
-          if (!indicatorsRes.ok || !indicatorsJson?.ok || !marketsRes.ok || !marketsJson?.ok) {
+          if (!indicatorsRes.ok || !indicatorsJson?.ok || !topMarketsRes.ok || !topMarketsJson?.ok) {
             throw new Error("fetch_failed");
           }
 
           const indicatorArr = Array.isArray(indicatorsJson?.payload?.items)
             ? indicatorsJson.payload.items
             : Object.values(indicatorsJson?.payload?.indicators || {});
+
+          const topMarketArr = Array.isArray(topMarketsJson.items) ? topMarketsJson.items : [];
+          const topArr = mergeSpotIndicatorsWithMarkets(indicatorArr, topMarketArr);
+
+          if (!cancelled && isInitialLoad) {
+            setItems((prev) => preserveSpotChange7d(topArr, prev));
+            hasLoadedRef.current = true;
+            setLoading(false);
+          }
+
+          const marketsRes = await marketsPromise;
+          const marketsJson = (await marketsRes.json()) as MarketsV2Res;
+
+          if (!marketsRes.ok || !marketsJson?.ok) {
+            throw new Error("fetch_failed");
+          }
 
           const marketArr = Array.isArray(marketsJson.items) ? marketsJson.items : [];
           const fullMarketArr = isInitialLoad ? [...topMarketArr, ...marketArr] : marketArr;
