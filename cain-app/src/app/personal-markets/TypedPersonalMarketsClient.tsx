@@ -1263,22 +1263,19 @@ function warmPersonalMarketDetail(type: MarketType, symbol: string) {
 
   const normalizedType = normalizeType(type);
   const normalizedSymbol = normalizeFavoriteSymbol(symbol);
-  if (!normalizedSymbol) return;
+  if (!normalizedSymbol || normalizedType !== "spot") return;
 
-  const key = `${normalizedType}:${normalizedSymbol}`;
+  const key = `${normalizedType}:${normalizedSymbol}:24h-chart`;
   if (detailWarmupInFlight.has(key)) return;
 
   detailWarmupInFlight.add(key);
 
   runWhenIdle(() => {
-    void Promise.allSettled([
-      fetch(pmApi(`/detail?type=${encodeURIComponent(normalizedType)}&symbol=${encodeURIComponent(normalizedSymbol)}`)),
-      normalizedType === "spot"
-        ? fetch(pmApi(`/chart?type=spot&symbol=${encodeURIComponent(normalizedSymbol)}&range=24h`))
-        : Promise.resolve(null),
-    ]).finally(() => {
-      window.setTimeout(() => detailWarmupInFlight.delete(key), 15_000);
-    });
+    void fetch(pmApi(`/chart?type=spot&symbol=${encodeURIComponent(normalizedSymbol)}&range=24h`))
+      .catch(() => {})
+      .finally(() => {
+        window.setTimeout(() => detailWarmupInFlight.delete(key), 15_000);
+      });
   });
 }
 
@@ -1305,12 +1302,12 @@ function warmTopSpotCharts(items: AnyIndicator[]) {
       }
 
       if (index < targets.length) {
-        window.setTimeout(warmNext, 120);
+        window.setTimeout(warmNext, 300);
       }
     };
 
     warmNext();
-  }, 1600);
+  }, 2800);
 }
 
 function prefetchOtherPersonalMarketTypes() {
@@ -2459,10 +2456,6 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
           if (!cancelled) {
             setItems((prev) => preserveSpotChange7d(arr, prev));
             hasLoadedRef.current = true;
-          }
-
-          if (isInitialLoad) {
-            prefetchOtherPersonalMarketTypes();
           }
 
           void change7dPromise.then((change7dMarketArr) => {

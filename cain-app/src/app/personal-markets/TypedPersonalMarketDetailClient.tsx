@@ -965,6 +965,19 @@ const EXCHANGE_ICON_BASE_MAP: Record<string, string> = {
   korbit: "korbit",
 };
 
+const EXCHANGE_ICON_EXT_MAP: Record<string, string> = {
+  binance: "jpg",
+  bitget: "jpg",
+  kraken: "jpg",
+  bybit: "png",
+  okx: "png",
+  coinbase: "png",
+  upbit: "png",
+  bithumb: "png",
+  coinone: "png",
+  korbit: "png",
+};
+
 function titleCaseExchange(raw: string) {
   return raw
     .split(/[-_\s]+/)
@@ -978,6 +991,10 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
   const lower = raw.toLowerCase();
   const base = lower.split(/[_-]/)[0] || lower;
   const iconBase = EXCHANGE_ICON_BASE_MAP[base] || base || "exchange";
+  const preferredIconExt = EXCHANGE_ICON_EXT_MAP[base] || null;
+  const iconExts = preferredIconExt
+    ? [preferredIconExt, ...["png", "jpg", "svg", "webp"].filter((ext) => ext !== preferredIconExt)]
+    : ["png", "jpg", "svg", "webp"];
   const venue = EXCHANGE_NAME_MAP[base] || titleCaseExchange(base || raw) || "Exchange";
 
   let market = "";
@@ -991,12 +1008,7 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
     label: market ? `${venue}-${market}` : venue,
     venue,
     market,
-    iconPaths: [
-      `/exchanges/${iconBase}.png`,
-      `/exchanges/${iconBase}.svg`,
-      `/exchanges/${iconBase}.webp`,
-      `/exchanges/${iconBase}.jpg`,
-    ],
+    iconPaths: iconExts.map((ext) => `/exchanges/${iconBase}.${ext}`),
     initial: venue.slice(0, 1).toUpperCase(),
   };
 }
@@ -3383,23 +3395,6 @@ export default function TypedPersonalMarketDetailClient({
       window.clearTimeout(timeout);
     };
   }, [marketType, sym, chartRange]);
-
-  useEffect(() => {
-    if (marketType !== "spot" || !sym) return;
-
-    let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      if (cancelled) return;
-
-      void prefetchDetailData("domestic-global", sym);
-      void prefetchDetailData("futures-spot", sym);
-    }, 700);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [marketType, sym]);
 
   const aiContext = useMemo(() => {
     const item = effectiveItem;
