@@ -1282,6 +1282,37 @@ function warmPersonalMarketDetail(type: MarketType, symbol: string) {
   });
 }
 
+
+function warmTopSpotCharts(items: AnyIndicator[]) {
+  if (typeof window === "undefined") return;
+
+  const targets = items
+    .slice(0, 30)
+    .map((item) => normalizeFavoriteSymbol(item.symbol))
+    .filter(Boolean);
+
+  if (!targets.length) return;
+
+  runWhenIdle(() => {
+    let index = 0;
+
+    const warmNext = () => {
+      const symbol = targets[index];
+      index += 1;
+
+      if (symbol) {
+        warmPersonalMarketDetail("spot", symbol);
+      }
+
+      if (index < targets.length) {
+        window.setTimeout(warmNext, 120);
+      }
+    };
+
+    warmNext();
+  }, 1600);
+}
+
 function prefetchOtherPersonalMarketTypes() {
   if (typeof window === "undefined") return;
 
@@ -2411,6 +2442,7 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
             setItems((prev) => preserveSpotChange7d(topArr, prev));
             hasLoadedRef.current = true;
             setLoading(false);
+            warmTopSpotCharts(topArr);
           }
 
           const marketsRes = await marketsPromise;

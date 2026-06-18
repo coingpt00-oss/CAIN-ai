@@ -332,7 +332,10 @@ function readDetailSeed(type: MarketType, symbol: string): DetailRes | null {
           ? (rawItem as AnyIndicator)
           : null;
 
-      const item = normalizedMarketItem || fallbackItem;
+      const item =
+        fallbackItem && normalizedMarketItem
+          ? mergeSpotSupplement(fallbackItem, normalizedMarketItem)
+          : normalizedMarketItem || fallbackItem;
       if (!item) continue;
 
       const itemSymbol = normalizeSpotSymbol((rawItem as any)?.symbol_upper || item.symbol || item.canonical_symbol);
@@ -989,8 +992,8 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
     venue,
     market,
     iconPaths: [
-      `/exchanges/${iconBase}.svg`,
       `/exchanges/${iconBase}.png`,
+      `/exchanges/${iconBase}.svg`,
       `/exchanges/${iconBase}.webp`,
       `/exchanges/${iconBase}.jpg`,
     ],
@@ -3272,7 +3275,7 @@ export default function TypedPersonalMarketDetailClient({
             : null;
 
         const merged = marketItem && indicatorItem
-          ? mergeSpotSupplement(marketItem, indicatorItem)
+          ? mergeSpotSupplement(indicatorItem, marketItem)
           : marketItem || indicatorItem || null;
 
         spotSupplementCache.set(cacheKey, { ts: Date.now(), data: merged });
