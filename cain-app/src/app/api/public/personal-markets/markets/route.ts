@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const CDN_CACHE = "public, s-maxage=10, stale-while-revalidate=30";
+const CDN_CACHE_CHANGE_7D = "public, s-maxage=60, stale-while-revalidate=300";
 const BROWSER_CACHE = "public, max-age=0, must-revalidate";
 
 function jsonError(message: string, status = 500, detail?: string) {
@@ -202,11 +203,15 @@ export async function GET(req: NextRequest) {
     }
 
     const nocache = req.nextUrl.searchParams.get("nocache") === "1";
+    const includeChange7d = req.nextUrl.searchParams.get("include_change_7d") === "1";
     const includeFull =
       req.nextUrl.searchParams.get("full") === "1" ||
       req.nextUrl.searchParams.get("include_full") === "1";
-    const qs = req.nextUrl.search || "";
+    const upstreamParams = new URLSearchParams(req.nextUrl.searchParams);
+    upstreamParams.delete("include_change_7d");
+    const qs = upstreamParams.toString() ? `?${upstreamParams.toString()}` : "";
     const target = `${API_BASE.replace(/\/+$/, "")}/markets-v2${qs}`;
+    const cdnCache = includeChange7d ? CDN_CACHE_CHANGE_7D : CDN_CACHE;
 
     const upstream = await fetch(target, {
       method: "GET",
@@ -260,9 +265,18 @@ export async function GET(req: NextRequest) {
     }
 
     const payload = slimMarketsPayload(data, includeFull);
-    const enrichedPayload = await enrichSpotChange7d(payload);
+    const finalPayload = includeChange7d
+      ? await enrichSpotChange7d(payload)
+      : {
+          ...payload,
+          meta: {
+            ...(payload?.meta || {}),
+            change_7d_enriched: false,
+            change_7d_skipped: true,
+          },
+        };
 
-    return new NextResponse(JSON.stringify(enrichedPayload), {
+    return new NextResponse(JSON.stringify(finalPayload), {
       status: upstream.status,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -274,13 +288,14 @@ export async function GET(req: NextRequest) {
         ...(nocache
           ? {}
           : {
-              "CDN-Cache-Control": CDN_CACHE,
-              "Vercel-CDN-Cache-Control": CDN_CACHE,
+              "CDN-Cache-Control": cdnCache,
+              "Vercel-CDN-Cache-Control": cdnCache,
             }),
 
         "X-Cain-Upstream": "ok",
         "X-Cain-Cache": nocache ? "bypass" : "cdn",
         "X-Cain-Slim": includeFull ? "0" : "1",
+        "X-Cain-Change7D": includeChange7d ? "1" : "0",
       },
     });
   } catch (error) {

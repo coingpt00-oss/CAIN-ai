@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { pmApi } from "@/lib/personalMarketsApi";
 import CoinGeckoAttribution from "@/components/CoinGeckoAttribution";
@@ -1167,6 +1168,58 @@ function normalizeSpotMarketItem(row: MarketsV2ItemRes): SpotIndicator {
   };
 }
 
+function getSpotMergeKey(item: any) {
+  return normalizeFavoriteSymbol(item?.symbol_upper || item?.symbol || item?.canonical_symbol);
+}
+
+function preserveSpotChange7d(items: SpotIndicator[], previousItems: AnyIndicator[]) {
+  const changeMap = new Map<string, number>();
+
+  for (const item of previousItems) {
+    const key = getSpotMergeKey(item);
+    const value = (item as SpotIndicator).change_7d;
+    if (key && hasNum(value)) changeMap.set(key, n(value));
+  }
+
+  return items.map((item) => {
+    if (hasNum(item.change_7d)) return item;
+
+    const key = getSpotMergeKey(item);
+    const value = key ? changeMap.get(key) : undefined;
+    if (!hasNum(value)) return item;
+
+    return {
+      ...item,
+      change_7d: n(value),
+    };
+  });
+}
+
+function mergeSpotChange7d(items: AnyIndicator[], marketItems: MarketsV2ItemRes[]) {
+  if (!marketItems.length) return items;
+
+  const changeMap = new Map<string, number>();
+
+  for (const row of marketItems) {
+    const normalized = normalizeSpotMarketItem(row);
+    const key = getSpotMergeKey(normalized);
+    if (key && hasNum(normalized.change_7d)) changeMap.set(key, n(normalized.change_7d));
+  }
+
+  if (!changeMap.size) return items;
+
+  return items.map((item) => {
+    const key = getSpotMergeKey(item);
+    const value = key ? changeMap.get(key) : undefined;
+    if (!hasNum(value)) return item;
+
+    return {
+      ...item,
+      change_7d: n(value),
+    };
+  });
+}
+
 function CoinCell({ item }: { item: AnyIndicator }) {
   const rankName = item.rank_name || item.canonical_symbol || "";
 
@@ -1326,6 +1379,8 @@ function DesktopTable({
   favoriteBusySymbol: string | null;
   onToggleFavorite: (symbol: string) => void;
 }) {
+  const router = useRouter();
+
   return (
     <div className="hidden overflow-hidden rounded-2xl border border-white/10 bg-black/40 xl:block">
       <div className="overflow-x-auto">
@@ -1647,9 +1702,10 @@ function DesktopTable({
 
               return (
                 <tr
-                          key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
-                          className={rowCls}
-                        >
+                  key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
+                  onClick={() => router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`)}
+                  className={`${rowCls} cursor-pointer`}
+                >
                   <td className="px-4 py-3 align-middle">
                     <div className="flex items-center gap-2">
                       <FavoriteButton
@@ -1938,6 +1994,8 @@ function MobileCards({
   favoriteBusySymbol: string | null;
   onToggleFavorite: (symbol: string) => void;
 }) {
+  const router = useRouter();
+
   // PC 테이블은 그대로 두고, 모바일에서는 CMC식 압축 리스트만 보여줍니다.
   // 아래 값들은 상세페이지에서 다루기 위해 메인 모바일 목록에서는 의도적으로 숨깁니다.
   void premiumDisplayMode;
@@ -2001,7 +2059,16 @@ function MobileCards({
           return (
             <div
               key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
-              className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_minmax(86px,0.72fr)_92px] items-center gap-2 px-3 py-2.5 hover:bg-white/[0.03]"
+              role="button"
+              tabIndex={0}
+              onClick={() => router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`);
+                }
+              }}
+              className="grid min-h-[64px] cursor-pointer grid-cols-[minmax(0,1fr)_minmax(86px,0.72fr)_92px] items-center gap-2 px-3 py-2.5 hover:bg-white/[0.03]"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <FavoriteButton
@@ -2203,9 +2270,46 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
 
       try {
         if (marketType === "spot") {
+          const isInitialLoad = !hasLoadedRef.current;
+          let topMarketArr: MarketsV2ItemRes[] = [];
+
+          if (isInitialLoad) {
+            const topMarketsRes = await fetch(
+              pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0`)
+            );
+            const topMarketsJson = (await topMarketsRes.json()) as MarketsV2Res;
+
+            if (!topMarketsRes.ok || !topMarketsJson?.ok) {
+              throw new Error("fetch_failed");
+            }
+
+            topMarketArr = Array.isArray(topMarketsJson.items) ? topMarketsJson.items : [];
+            const topArr = topMarketArr.map((row) => normalizeSpotMarketItem(row));
+
+            if (!cancelled) {
+              setItems(topArr);
+              hasLoadedRef.current = true;
+              setLoading(false);
+            }
+          }
+
+          const indicatorsPromise = fetch(pmApi(`/indicators?type=spot`));
+          const marketsPromise = isInitialLoad
+            ? fetch(pmApi(`/markets?currency=krw&limit=370&offset=30&only_live=0`))
+            : fetch(pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0`));
+          const change7dPromise = fetch(
+            pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0&include_change_7d=1`)
+          )
+            .then(async (res) => {
+              const json = (await res.json()) as MarketsV2Res;
+              if (!res.ok || !json?.ok) return [] as MarketsV2ItemRes[];
+              return Array.isArray(json.items) ? json.items : [];
+            })
+            .catch(() => [] as MarketsV2ItemRes[]);
+
           const [indicatorsRes, marketsRes] = await Promise.all([
-            fetch(pmApi(`/indicators?type=spot`)),
-            fetch(pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0`)),
+            indicatorsPromise,
+            marketsPromise,
           ]);
 
           const indicatorsJson = (await indicatorsRes.json()) as ApiRes;
@@ -2220,12 +2324,20 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
             : Object.values(indicatorsJson?.payload?.indicators || {});
 
           const marketArr = Array.isArray(marketsJson.items) ? marketsJson.items : [];
-          const arr = mergeSpotIndicatorsWithMarkets(indicatorArr, marketArr);
+          const fullMarketArr = isInitialLoad ? [...topMarketArr, ...marketArr] : marketArr;
+          const arr = mergeSpotIndicatorsWithMarkets(indicatorArr, fullMarketArr);
 
           if (!cancelled) {
-            setItems(arr);
+            setItems((prev) => preserveSpotChange7d(arr, prev));
             hasLoadedRef.current = true;
           }
+
+          void change7dPromise.then((change7dMarketArr) => {
+            if (!cancelled && change7dMarketArr.length) {
+              setItems((prev) => mergeSpotChange7d(prev, change7dMarketArr));
+            }
+          });
+
           return;
         }
 
