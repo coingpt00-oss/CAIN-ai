@@ -210,6 +210,9 @@ const COLOR_POS_STROKE = "#22c55e";
 const COLOR_NEG_STROKE = "#ef4444";
 const COLOR_ZERO_STROKE = "#ffffff";
 
+const prefetchedMarketTypeCache = new Map<MarketType, ApiRes>();
+const detailWarmupInFlight = new Set<string>();
+
 function n(v: any, d = 0) {
   if (v === null || v === undefined || v === "") return d;
   const x = Number(v);
@@ -1220,6 +1223,84 @@ function mergeSpotChange7d(items: AnyIndicator[], marketItems: MarketsV2ItemRes[
   });
 }
 
+
+function writePersonalMarketDetailSeed(type: MarketType, item: AnyIndicator) {
+  if (typeof window === "undefined") return;
+
+  const symbol = normalizeFavoriteSymbol(item.symbol);
+  if (!symbol) return;
+
+  const payload = {
+    seeded_at: Date.now(),
+    type,
+    symbol,
+    item,
+  };
+
+  try {
+    window.sessionStorage.setItem(
+      `cain:pm:detail-seed:${type}:${symbol}`,
+      JSON.stringify(payload)
+    );
+    window.sessionStorage.setItem("cain:personal-market-detail-seed", JSON.stringify(payload));
+  } catch {}
+}
+
+function runWhenIdle(task: () => void, timeout = 1200) {
+  if (typeof window === "undefined") return;
+
+  const requestIdle = (window as any).requestIdleCallback;
+  if (typeof requestIdle === "function") {
+    requestIdle(task, { timeout });
+    return;
+  }
+
+  window.setTimeout(task, Math.min(timeout, 500));
+}
+
+function warmPersonalMarketDetail(type: MarketType, symbol: string) {
+  if (typeof window === "undefined") return;
+
+  const normalizedType = normalizeType(type);
+  const normalizedSymbol = normalizeFavoriteSymbol(symbol);
+  if (!normalizedSymbol) return;
+
+  const key = `${normalizedType}:${normalizedSymbol}`;
+  if (detailWarmupInFlight.has(key)) return;
+
+  detailWarmupInFlight.add(key);
+
+  runWhenIdle(() => {
+    void Promise.allSettled([
+      fetch(pmApi(`/detail?type=${encodeURIComponent(normalizedType)}&symbol=${encodeURIComponent(normalizedSymbol)}`)),
+      normalizedType === "spot"
+        ? fetch(pmApi(`/chart?type=spot&symbol=${encodeURIComponent(normalizedSymbol)}&range=24h`))
+        : Promise.resolve(null),
+    ]).finally(() => {
+      window.setTimeout(() => detailWarmupInFlight.delete(key), 15_000);
+    });
+  });
+}
+
+function prefetchOtherPersonalMarketTypes() {
+  if (typeof window === "undefined") return;
+
+  runWhenIdle(() => {
+    for (const targetType of ["domestic-global", "futures-spot"] as MarketType[]) {
+      if (prefetchedMarketTypeCache.has(targetType)) continue;
+
+      void fetch(pmApi(`/indicators?type=${encodeURIComponent(targetType)}`))
+        .then(async (res) => {
+          const json = (await res.json()) as ApiRes;
+          if (res.ok && json?.ok) {
+            prefetchedMarketTypeCache.set(targetType, json);
+          }
+        })
+        .catch(() => {});
+    }
+  }, 1800);
+}
+
 function CoinCell({ item }: { item: AnyIndicator }) {
   const rankName = item.rank_name || item.canonical_symbol || "";
 
@@ -1380,6 +1461,19 @@ function DesktopTable({
   onToggleFavorite: (symbol: string) => void;
 }) {
   const router = useRouter();
+
+  const openDetail = (item: AnyIndicator) => {
+    writePersonalMarketDetailSeed(type, item);
+    router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`);
+  };
+
+  const prefetchDetail = (item: AnyIndicator) => {
+    const symbol = normalizeFavoriteSymbol(item.symbol);
+    if (!symbol) return;
+
+    router.prefetch(`/personal-markets/${type}/${encodeURIComponent(symbol)}`);
+    warmPersonalMarketDetail(type, symbol);
+  };
 
   return (
     <div className="hidden overflow-hidden rounded-2xl border border-white/10 bg-black/40 xl:block">
@@ -1703,7 +1797,9 @@ function DesktopTable({
               return (
                 <tr
                   key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
-                  onClick={() => router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`)}
+                  onClick={() => openDetail(item)}
+                  onMouseEnter={() => prefetchDetail(item)}
+                  onFocus={() => prefetchDetail(item)}
                   className={`${rowCls} cursor-pointer`}
                 >
                   <td className="px-4 py-3 align-middle">
@@ -1996,6 +2092,11 @@ function MobileCards({
 }) {
   const router = useRouter();
 
+  const openDetail = (item: AnyIndicator) => {
+    writePersonalMarketDetailSeed(type, item);
+    router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`);
+  };
+
   // PC 테이블은 그대로 두고, 모바일에서는 CMC식 압축 리스트만 보여줍니다.
   // 아래 값들은 상세페이지에서 다루기 위해 메인 모바일 목록에서는 의도적으로 숨깁니다.
   void premiumDisplayMode;
@@ -2061,11 +2162,11 @@ function MobileCards({
               key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
               role="button"
               tabIndex={0}
-              onClick={() => router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`)}
+              onClick={() => openDetail(item)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`);
+                  openDetail(item);
                 }
               }}
               className="grid min-h-[64px] cursor-pointer grid-cols-[minmax(0,1fr)_minmax(86px,0.72fr)_92px] items-center gap-2 px-3 py-2.5 hover:bg-white/[0.03]"
@@ -2328,6 +2429,10 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
             hasLoadedRef.current = true;
           }
 
+          if (isInitialLoad) {
+            prefetchOtherPersonalMarketTypes();
+          }
+
           void change7dPromise.then((change7dMarketArr) => {
             if (!cancelled && change7dMarketArr.length) {
               setItems((prev) => mergeSpotChange7d(prev, change7dMarketArr));
@@ -2337,9 +2442,25 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
           return;
         }
 
+        const cachedTypeData = prefetchedMarketTypeCache.get(marketType);
+
+        if (cachedTypeData?.ok && !hasLoadedRef.current) {
+          const cachedArr = Array.isArray(cachedTypeData?.payload?.items)
+            ? cachedTypeData.payload.items
+            : Object.values(cachedTypeData?.payload?.indicators || {});
+
+          if (!cancelled) {
+            setItems(cachedArr);
+            hasLoadedRef.current = true;
+            setLoading(false);
+          }
+        }
+
         const res = await fetch(pmApi(`/indicators?type=${encodeURIComponent(marketType)}`));
         const j = (await res.json()) as ApiRes;
         if (!j?.ok) throw new Error("fetch_failed");
+
+        prefetchedMarketTypeCache.set(marketType, j);
 
         const arr = Array.isArray(j?.payload?.items)
           ? j.payload.items
