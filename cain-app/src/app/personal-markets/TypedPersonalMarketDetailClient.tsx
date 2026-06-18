@@ -356,12 +356,17 @@ function mergeSpotSnapshotSeed(
   const merged = mergeSpotSupplement(item, seedItem);
   const itemChange7d = item.change_7d;
   const seedChange7d = seedItem.change_7d;
+  const itemChange7dNum = Number(itemChange7d);
+  const seedChange7dNum = Number(seedChange7d);
 
-  if (
-    isFiniteNum(seedChange7d) &&
-    (!isFiniteNum(itemChange7d) || Number(itemChange7d) === 0)
-  ) {
-    merged.change_7d = Number(seedChange7d);
+  if (isFiniteNum(itemChange7d) && itemChange7dNum !== 0) {
+    merged.change_7d = itemChange7dNum;
+  } else if (isFiniteNum(seedChange7d) && seedChange7dNum !== 0) {
+    merged.change_7d = seedChange7dNum;
+  } else if (isFiniteNum(itemChange7d)) {
+    merged.change_7d = itemChange7dNum;
+  } else if (isFiniteNum(seedChange7d)) {
+    merged.change_7d = seedChange7dNum;
   }
 
   return merged;
