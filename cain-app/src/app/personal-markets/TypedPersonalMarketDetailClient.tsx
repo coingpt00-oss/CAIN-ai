@@ -3,16 +3,11 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { pmApi } from "@/lib/personalMarketsApi";
+import AiBox from "@/components/ai/AiBox";
 import CoinGeckoAttribution from "@/components/CoinGeckoAttribution";
-
-const AiBox = dynamic(() => import("@/components/ai/AiBox"), {
-  ssr: false,
-  loading: () => null,
-});
 
 type MarketType = "spot" | "domestic-global" | "futures-spot";
 type RangeKey = "1h" | "24h" | "7d" | "30d" | "90d";
@@ -211,9 +206,6 @@ type CacheEntry<T> = {
 const detailCache = new Map<string, CacheEntry<DetailRes>>();
 const chartCache = new Map<string, CacheEntry<ChartRes>>();
 const spotSupplementCache = new Map<string, CacheEntry<AnyIndicator | null>>();
-const detailPrefetchInFlight = new Set<string>();
-
-const DETAIL_SEED_MAX_AGE = 120_000;
 
 function detailCacheTtl() {
   return 10_000;
@@ -292,131 +284,6 @@ function normalizeMarketSnapshotRow(row: any): AnyIndicator | null {
   };
 }
 
-
-function getDetailSeedKeys(type: MarketType, symbol: string) {
-  const normalizedType = normalizeType(type);
-  const normalizedSymbol = normalizeSpotSymbol(symbol);
-
-  return [
-    `cain:pm:detail-seed:${normalizedType}:${normalizedSymbol}`,
-    `cain:pm:detail-seed:spot:${normalizedSymbol}`,
-    `cain:personal-market-detail-seed:${normalizedType}:${normalizedSymbol}`,
-    `cain:personal-market-detail-seed:${normalizedSymbol}`,
-    "cain:pm:selected-market",
-    "cain:personal-market-detail-seed",
-  ];
-}
-
-function readDetailSeed(type: MarketType, symbol: string): DetailRes | null {
-  if (typeof window === "undefined") return null;
-
-  const normalizedType = normalizeType(type);
-  const normalizedSymbol = normalizeSpotSymbol(symbol);
-
-  for (const key of getDetailSeedKeys(normalizedType, normalizedSymbol)) {
-    try {
-      const raw = window.sessionStorage.getItem(key);
-      if (!raw) continue;
-
-      const parsed = JSON.parse(raw);
-      const seededAt = Number(parsed?.seeded_at || parsed?.seededAt || parsed?.stored_at || parsed?.storedAt || 0);
-
-      if (seededAt > 0 && Date.now() - seededAt > DETAIL_SEED_MAX_AGE) {
-        continue;
-      }
-
-      const rawItem = parsed?.item || parsed?.row || parsed?.data || parsed;
-      const normalizedMarketItem = normalizeMarketSnapshotRow(rawItem);
-      const fallbackItem =
-        rawItem && typeof rawItem === "object" && (rawItem.symbol || rawItem.symbol_upper || rawItem.canonical_symbol)
-          ? (rawItem as AnyIndicator)
-          : null;
-
-      const item =
-        fallbackItem && normalizedMarketItem
-          ? mergeSpotSupplement(fallbackItem, normalizedMarketItem)
-          : normalizedMarketItem || fallbackItem;
-      if (!item) continue;
-
-      const itemSymbol = normalizeSpotSymbol((rawItem as any)?.symbol_upper || item.symbol || item.canonical_symbol);
-      if (itemSymbol !== normalizedSymbol) continue;
-
-      return {
-        ok: true,
-        type: normalizedType,
-        symbol: normalizedSymbol,
-        canonical_symbol: item.canonical_symbol || `${normalizedSymbol}USDT`,
-        item: {
-          ...item,
-          symbol: item.symbol || normalizedSymbol,
-          canonical_symbol: item.canonical_symbol || `${normalizedSymbol}USDT`,
-          type: item.type || normalizedType,
-        },
-        history: {
-          source: "session-seed",
-        },
-      };
-    } catch {}
-  }
-
-  return null;
-}
-
-async function prefetchDetailData(type: MarketType, symbol: string) {
-  const normalizedType = normalizeType(type);
-  const normalizedSymbol = normalizeSpotSymbol(symbol);
-  const cacheKey = `${normalizedType}:${normalizedSymbol}`;
-  const cached = detailCache.get(cacheKey);
-  const fresh = cached && Date.now() - cached.ts < detailCacheTtl();
-
-  if (fresh) return;
-
-  const flightKey = `detail:${cacheKey}`;
-  if (detailPrefetchInFlight.has(flightKey)) return;
-
-  detailPrefetchInFlight.add(flightKey);
-
-  try {
-    const detailUrl = pmApi(`/detail?type=${encodeURIComponent(normalizedType)}&symbol=${encodeURIComponent(normalizedSymbol)}`);
-    const res = await fetch(detailUrl);
-    const json = (await res.json()) as DetailRes;
-    if (res.ok && json?.ok) {
-      detailCache.set(cacheKey, { ts: Date.now(), data: json });
-    }
-  } catch {
-  } finally {
-    detailPrefetchInFlight.delete(flightKey);
-  }
-}
-
-async function prefetchChartData(type: MarketType, symbol: string, range: RangeKey) {
-  const normalizedType = normalizeType(type);
-  const normalizedSymbol = normalizeSpotSymbol(symbol);
-  const cacheKey = `${normalizedType}:${normalizedSymbol}:${range}`;
-  const cached = chartCache.get(cacheKey);
-  const ttl = chartCacheTtl(range);
-  const fresh = cached && ttl > 0 && Date.now() - cached.ts < ttl;
-
-  if (fresh) return;
-
-  const flightKey = `chart:${cacheKey}`;
-  if (detailPrefetchInFlight.has(flightKey)) return;
-
-  detailPrefetchInFlight.add(flightKey);
-
-  try {
-    const chartUrl = pmApi(`/chart?type=${encodeURIComponent(normalizedType)}&symbol=${encodeURIComponent(normalizedSymbol)}&range=${encodeURIComponent(range)}`);
-    const res = await fetch(chartUrl);
-    const json = (await res.json()) as ChartRes;
-    if (res.ok && json?.ok) {
-      chartCache.set(cacheKey, { ts: Date.now(), data: json });
-    }
-  } catch {
-  } finally {
-    detailPrefetchInFlight.delete(flightKey);
-  }
-}
-
 function findSpotSupplementFromResponse(raw: any, symbol: string): AnyIndicator | null {
   const target = normalizeSpotSymbol(symbol);
 
@@ -480,12 +347,6 @@ function mergeSpotSupplement(base: AnyIndicator, supplemental?: AnyIndicator | n
   for (const key of numericKeys) {
     const currentValue = merged[key];
     const fallbackValue = supplemental[key];
-
-    if (key === "change_7d" && isFiniteNum(fallbackValue)) {
-      (merged as any)[key] = Number(fallbackValue);
-      continue;
-    }
-
     if (!isFiniteNum(currentValue) && isFiniteNum(fallbackValue)) {
       (merged as any)[key] = Number(fallbackValue);
     }
@@ -965,19 +826,6 @@ const EXCHANGE_ICON_BASE_MAP: Record<string, string> = {
   korbit: "korbit",
 };
 
-const EXCHANGE_ICON_EXT_MAP: Record<string, string> = {
-  binance: "jpg",
-  bitget: "jpg",
-  kraken: "jpg",
-  bybit: "png",
-  okx: "png",
-  coinbase: "png",
-  upbit: "png",
-  bithumb: "png",
-  coinone: "png",
-  korbit: "png",
-};
-
 function titleCaseExchange(raw: string) {
   return raw
     .split(/[-_\s]+/)
@@ -991,10 +839,6 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
   const lower = raw.toLowerCase();
   const base = lower.split(/[_-]/)[0] || lower;
   const iconBase = EXCHANGE_ICON_BASE_MAP[base] || base || "exchange";
-  const preferredIconExt = EXCHANGE_ICON_EXT_MAP[base] || null;
-  const iconExts = preferredIconExt
-    ? [preferredIconExt, ...["png", "jpg", "svg", "webp"].filter((ext) => ext !== preferredIconExt)]
-    : ["png", "jpg", "svg", "webp"];
   const venue = EXCHANGE_NAME_MAP[base] || titleCaseExchange(base || raw) || "Exchange";
 
   let market = "";
@@ -1008,7 +852,12 @@ function getExchangeMeta(rawName: string): ExchangeMeta {
     label: market ? `${venue}-${market}` : venue,
     venue,
     market,
-    iconPaths: iconExts.map((ext) => `/exchanges/${iconBase}.${ext}`),
+    iconPaths: [
+      `/exchanges/${iconBase}.svg`,
+      `/exchanges/${iconBase}.png`,
+      `/exchanges/${iconBase}.webp`,
+      `/exchanges/${iconBase}.jpg`,
+    ],
     initial: venue.slice(0, 1).toUpperCase(),
   };
 }
@@ -2345,7 +2194,7 @@ function ChartWorkspace({
   chartRange: RangeKey;
   setChartRange: (value: RangeKey) => void;
 }) {
-  const allSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item, chartRange]);
+  const allSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const views = useMemo(() => buildViews(marketType, allSeries), [marketType, allSeries]);
   const [activeViewKey, setActiveViewKey] = useState("");
 
@@ -3008,7 +2857,7 @@ function DomesticGlobalDetail({
   const premium = n(item.premium_pct);
   const sideText = premium > 0 ? "국내가 더 높은 편" : premium < 0 ? "해외가 더 높은 편" : "중립";
   const globalGapKrw = n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
-  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item, chartRange]);
+  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const premiumSeries = preparedSeries.find((entry) => entry.key === "premium_pct");
   const premiumPosition = useMemo(
     () => positionVsAverageText(getLastNumericValue(premiumSeries), averageOfSeries(premiumSeries), "percent"),
@@ -3096,7 +2945,7 @@ function FuturesSpotDetail({
   const futuresAvg = n(item.global_futures_avg_usd);
   const priceGap = futuresAvg - spotAvg;
   const sideText = basis >= 0 ? "선물 프리미엄" : "선물 할인";
-  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item, chartRange]);
+  const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const basisSeries = preparedSeries.find((entry) => entry.key === "basis_pct");
   const basisPosition = useMemo(
     () => positionVsAverageText(getLastNumericValue(basisSeries), averageOfSeries(basisSeries), "percent"),
@@ -3190,15 +3039,6 @@ export default function TypedPersonalMarketDetailClient({
 
     async function load(opts?: { silent?: boolean }) {
       const silent = !!opts?.silent;
-      const seed = readDetailSeed(marketType, sym);
-
-      if (seed && !hasLoadedRef.current) {
-        detailCache.set(cacheKey, { ts: Date.now(), data: seed });
-        setData(seed);
-        hasLoadedRef.current = true;
-        setLoading(false);
-      }
-
       const cached = detailCache.get(cacheKey);
       const fresh = cached && Date.now() - cached.ts < detailCacheTtl();
 
@@ -3269,7 +3109,7 @@ export default function TypedPersonalMarketDetailClient({
       }
 
       try {
-        const marketUrl = pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0&q=${encodeURIComponent(sym)}&include_change_7d=1`);
+        const marketUrl = pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0&q=${encodeURIComponent(sym)}`);
         const indicatorUrl = pmApi(`/indicators?type=spot`);
 
         const [marketResult, indicatorResult] = await Promise.allSettled([
@@ -3287,7 +3127,7 @@ export default function TypedPersonalMarketDetailClient({
             : null;
 
         const merged = marketItem && indicatorItem
-          ? mergeSpotSupplement(indicatorItem, marketItem)
+          ? mergeSpotSupplement(marketItem, indicatorItem)
           : marketItem || indicatorItem || null;
 
         spotSupplementCache.set(cacheKey, { ts: Date.now(), data: merged });
@@ -3374,27 +3214,6 @@ export default function TypedPersonalMarketDetailClient({
     if (!item) return null;
     return marketType === "spot" ? mergeSpotSupplement(item, spotSupplement) : item;
   }, [item, marketType, spotSupplement]);
-
-  useEffect(() => {
-    if (!sym) return;
-
-    let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      if (cancelled) return;
-
-      const ranges: RangeKey[] = ["1h", "7d", "30d"];
-      for (const range of ranges) {
-        if (range !== chartRange) {
-          void prefetchChartData(marketType, sym, range);
-        }
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [marketType, sym, chartRange]);
 
   const aiContext = useMemo(() => {
     const item = effectiveItem;
