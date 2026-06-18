@@ -207,6 +207,8 @@ const detailCache = new Map<string, CacheEntry<DetailRes>>();
 const chartCache = new Map<string, CacheEntry<ChartRes>>();
 const spotSupplementCache = new Map<string, CacheEntry<AnyIndicator | null>>();
 
+const DETAIL_SEED_MAX_AGE = 120_000;
+
 function detailCacheTtl() {
   return 10_000;
 }
@@ -284,6 +286,87 @@ function normalizeMarketSnapshotRow(row: any): AnyIndicator | null {
   };
 }
 
+
+function getDetailSeedKeys(type: MarketType, symbol: string) {
+  const normalizedType = normalizeType(type);
+  const normalizedSymbol = normalizeSpotSymbol(symbol);
+
+  return [
+    `cain:pm:detail-seed:${normalizedType}:${normalizedSymbol}`,
+    `cain:pm:detail-seed:spot:${normalizedSymbol}`,
+    "cain:personal-market-detail-seed",
+  ];
+}
+
+function readDetailSeedItem(type: MarketType, symbol: string): AnyIndicator | null {
+  if (typeof window === "undefined") return null;
+
+  const normalizedType = normalizeType(type);
+  const normalizedSymbol = normalizeSpotSymbol(symbol);
+  if (normalizedType !== "spot" || !normalizedSymbol) return null;
+
+  for (const key of getDetailSeedKeys(normalizedType, normalizedSymbol)) {
+    try {
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+      const seededAt = Number(parsed?.seeded_at || parsed?.seededAt || parsed?.stored_at || parsed?.storedAt || 0);
+
+      if (seededAt > 0 && Date.now() - seededAt > DETAIL_SEED_MAX_AGE) {
+        continue;
+      }
+
+      const rawItem = parsed?.item || parsed?.row || parsed?.data || parsed;
+      const normalizedMarketItem = normalizeMarketSnapshotRow(rawItem);
+      const fallbackItem =
+        rawItem && typeof rawItem === "object" && (rawItem.symbol || rawItem.symbol_upper || rawItem.canonical_symbol)
+          ? (rawItem as AnyIndicator)
+          : null;
+
+      const item =
+        fallbackItem && normalizedMarketItem
+          ? mergeSpotSupplement(fallbackItem, normalizedMarketItem)
+          : normalizedMarketItem || fallbackItem;
+
+      if (!item) continue;
+
+      const itemSymbol = normalizeSpotSymbol((rawItem as any)?.symbol_upper || item.symbol || item.canonical_symbol);
+      if (itemSymbol !== normalizedSymbol) continue;
+
+      return {
+        ...item,
+        symbol: item.symbol || normalizedSymbol,
+        canonical_symbol: item.canonical_symbol || `${normalizedSymbol}USDT`,
+        type: "spot",
+      };
+    } catch {}
+  }
+
+  return null;
+}
+
+function mergeSpotSnapshotSeed(
+  item: AnyIndicator | null,
+  seedItem: AnyIndicator | null
+): AnyIndicator | null {
+  if (!seedItem) return item;
+  if (!item) return seedItem;
+
+  const merged = mergeSpotSupplement(item, seedItem);
+  const itemChange7d = item.change_7d;
+  const seedChange7d = seedItem.change_7d;
+
+  if (
+    isFiniteNum(seedChange7d) &&
+    (!isFiniteNum(itemChange7d) || Number(itemChange7d) === 0)
+  ) {
+    merged.change_7d = Number(seedChange7d);
+  }
+
+  return merged;
+}
+
 function findSpotSupplementFromResponse(raw: any, symbol: string): AnyIndicator | null {
   const target = normalizeSpotSymbol(symbol);
 
@@ -347,6 +430,12 @@ function mergeSpotSupplement(base: AnyIndicator, supplemental?: AnyIndicator | n
   for (const key of numericKeys) {
     const currentValue = merged[key];
     const fallbackValue = supplemental[key];
+
+    if (key === "change_7d" && isFiniteNum(fallbackValue)) {
+      (merged as any)[key] = Number(fallbackValue);
+      continue;
+    }
+
     if (!isFiniteNum(currentValue) && isFiniteNum(fallbackValue)) {
       (merged as any)[key] = Number(fallbackValue);
     }
@@ -2764,6 +2853,7 @@ function MobileFuturesSpotOverview({ item }: { item: AnyIndicator }) {
 
 function SpotDetail({
   item,
+  snapshotItem,
   chartData,
   chartLoading,
   chartRefreshing,
@@ -2771,12 +2861,14 @@ function SpotDetail({
   setChartRange,
 }: {
   item: AnyIndicator;
+  snapshotItem?: AnyIndicator | null;
   chartData: ChartRes | null;
   chartLoading: boolean;
   chartRefreshing: boolean;
   chartRange: RangeKey;
   setChartRange: (value: RangeKey) => void;
 }) {
+  const summaryItem = snapshotItem || item;
   const spotRows = item.exchanges?.global_spot_usd || [];
   const spreadUsd = n(item.global_spread_usd);
   const avgUsd = n(item.global_avg_usd) || avg(spotRows.map((row) => row.price));
@@ -2786,7 +2878,7 @@ function SpotDetail({
   return (
     <>
       <div className="grid gap-3 xl:hidden">
-        <MobileSpotDetailOverview item={item} chartData={chartData} />
+        <MobileSpotDetailOverview item={summaryItem} chartData={chartData} />
 
         <ChartWorkspace
           marketType="spot"
@@ -2805,7 +2897,7 @@ function SpotDetail({
       </div>
 
       <div className="hidden gap-4 xl:grid">
-        <SpotMarketSnapshot item={item} chartData={chartData} />
+        <SpotMarketSnapshot item={summaryItem} chartData={chartData} />
 
         <ChartWorkspace
           marketType="spot"
@@ -3025,6 +3117,9 @@ export default function TypedPersonalMarketDetailClient({
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<DetailRes | null>(null);
   const [spotSupplement, setSpotSupplement] = useState<AnyIndicator | null>(null);
+  const [seedItem, setSeedItem] = useState<AnyIndicator | null>(() =>
+    readDetailSeedItem(normalizeType(type), String(symbol || "").toUpperCase().trim())
+  );
   const hasLoadedRef = useRef(false);
 
   const [chartLoading, setChartLoading] = useState(true);
@@ -3032,6 +3127,10 @@ export default function TypedPersonalMarketDetailClient({
   const [chartData, setChartData] = useState<ChartRes | null>(null);
   const chartLoadedRef = useRef(false);
   const [chartRange, setChartRange] = useState<RangeKey>("24h");
+
+  useEffect(() => {
+    setSeedItem(readDetailSeedItem(marketType, sym));
+  }, [marketType, sym]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3109,7 +3208,7 @@ export default function TypedPersonalMarketDetailClient({
       }
 
       try {
-        const marketUrl = pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0&q=${encodeURIComponent(sym)}`);
+        const marketUrl = pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0&q=${encodeURIComponent(sym)}&include_change_7d=1`);
         const indicatorUrl = pmApi(`/indicators?type=spot`);
 
         const [marketResult, indicatorResult] = await Promise.allSettled([
@@ -3127,7 +3226,7 @@ export default function TypedPersonalMarketDetailClient({
             : null;
 
         const merged = marketItem && indicatorItem
-          ? mergeSpotSupplement(marketItem, indicatorItem)
+          ? mergeSpotSupplement(indicatorItem, marketItem)
           : marketItem || indicatorItem || null;
 
         spotSupplementCache.set(cacheKey, { ts: Date.now(), data: merged });
@@ -3215,6 +3314,11 @@ export default function TypedPersonalMarketDetailClient({
     return marketType === "spot" ? mergeSpotSupplement(item, spotSupplement) : item;
   }, [item, marketType, spotSupplement]);
 
+  const spotSnapshotItem = useMemo(() => {
+    if (marketType !== "spot") return effectiveItem;
+    return mergeSpotSnapshotSeed(effectiveItem, seedItem);
+  }, [effectiveItem, marketType, seedItem]);
+
   const aiContext = useMemo(() => {
     const item = effectiveItem;
     if (!item) return null;
@@ -3278,7 +3382,19 @@ export default function TypedPersonalMarketDetailClient({
       </section>
 
       {loading && !effectiveItem ? (
-        <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-sm opacity-65">로딩 중…</div>
+        <>
+          {marketType === "spot" && spotSnapshotItem ? (
+            <>
+              <div className="grid gap-3 xl:hidden">
+                <MobileSpotDetailOverview item={spotSnapshotItem} chartData={chartData} />
+              </div>
+              <div className="hidden gap-4 xl:grid">
+                <SpotMarketSnapshot item={spotSnapshotItem} chartData={chartData} />
+              </div>
+            </>
+          ) : null}
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-sm opacity-65">로딩 중…</div>
+        </>
       ) : !effectiveItem ? (
         <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-sm opacity-65">
           지표 데이터를 찾지 못했습니다.<br />
@@ -3307,6 +3423,7 @@ export default function TypedPersonalMarketDetailClient({
           ) : (
             <SpotDetail
               item={effectiveItem}
+              snapshotItem={spotSnapshotItem}
               chartData={chartData}
               chartLoading={chartLoading}
               chartRefreshing={chartRefreshing}

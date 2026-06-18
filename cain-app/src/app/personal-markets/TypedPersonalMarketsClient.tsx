@@ -210,9 +210,6 @@ const COLOR_POS_STROKE = "#22c55e";
 const COLOR_NEG_STROKE = "#ef4444";
 const COLOR_ZERO_STROKE = "#ffffff";
 
-const prefetchedMarketTypeCache = new Map<MarketType, ApiRes>();
-const detailWarmupInFlight = new Set<string>();
-
 function n(v: any, d = 0) {
   if (v === null || v === undefined || v === "") return d;
   const x = Number(v);
@@ -1171,58 +1168,98 @@ function normalizeSpotMarketItem(row: MarketsV2ItemRes): SpotIndicator {
   };
 }
 
+
 function getSpotMergeKey(item: any) {
   return normalizeFavoriteSymbol(item?.symbol_upper || item?.symbol || item?.canonical_symbol);
 }
 
-function preserveSpotChange7d(items: SpotIndicator[], previousItems: AnyIndicator[]) {
-  const changeMap = new Map<string, number>();
+function stripSpotDeferredChanges(items: SpotIndicator[]) {
+  return items.map((item) => ({
+    ...item,
+    change_1h: null,
+    change_7d: null,
+  }));
+}
+
+function preserveSpotDeferredChanges(items: SpotIndicator[], previousItems: AnyIndicator[]) {
+  const previousMap = new Map<string, { change_1h?: number | null; change_7d?: number | null }>();
 
   for (const item of previousItems) {
     const key = getSpotMergeKey(item);
-    const value = (item as SpotIndicator).change_7d;
-    if (key && hasNum(value)) changeMap.set(key, n(value));
+    if (!key) continue;
+
+    previousMap.set(key, {
+      change_1h: (item as SpotIndicator).change_1h,
+      change_7d: (item as SpotIndicator).change_7d,
+    });
   }
 
   return items.map((item) => {
-    if (hasNum(item.change_7d)) return item;
-
     const key = getSpotMergeKey(item);
-    const value = key ? changeMap.get(key) : undefined;
-    if (!hasNum(value)) return item;
+    const previous = key ? previousMap.get(key) : null;
+    if (!previous) return item;
 
     return {
       ...item,
-      change_7d: n(value),
+      change_1h: hasNum(item.change_1h)
+        ? item.change_1h
+        : hasNum(previous.change_1h)
+          ? n(previous.change_1h)
+          : item.change_1h,
+      change_7d: hasNum(item.change_7d)
+        ? item.change_7d
+        : hasNum(previous.change_7d)
+          ? n(previous.change_7d)
+          : item.change_7d,
     };
   });
 }
 
-function mergeSpotChange7d(items: AnyIndicator[], marketItems: MarketsV2ItemRes[]) {
-  if (!marketItems.length) return items;
+function mergeSpotChanges(
+  items: AnyIndicator[],
+  marketItems: MarketsV2ItemRes[],
+  keys: ("change_1h" | "change_7d")[]
+) {
+  if (!items.length || !marketItems.length || !keys.length) return items;
 
-  const changeMap = new Map<string, number>();
+  const changeMap = new Map<string, Partial<Pick<SpotIndicator, "change_1h" | "change_7d">>>();
 
   for (const row of marketItems) {
     const normalized = normalizeSpotMarketItem(row);
     const key = getSpotMergeKey(normalized);
-    if (key && hasNum(normalized.change_7d)) changeMap.set(key, n(normalized.change_7d));
+    if (!key) continue;
+
+    const entry = changeMap.get(key) || {};
+
+    if (keys.includes("change_1h") && hasNum(normalized.change_1h)) {
+      entry.change_1h = n(normalized.change_1h);
+    }
+
+    if (keys.includes("change_7d") && hasNum(normalized.change_7d)) {
+      entry.change_7d = n(normalized.change_7d);
+    }
+
+    changeMap.set(key, entry);
   }
 
   if (!changeMap.size) return items;
 
   return items.map((item) => {
     const key = getSpotMergeKey(item);
-    const value = key ? changeMap.get(key) : undefined;
-    if (!hasNum(value)) return item;
+    const change = key ? changeMap.get(key) : null;
+    if (!change) return item;
 
     return {
       ...item,
-      change_7d: n(value),
-    };
+      ...(keys.includes("change_1h") && hasNum(change.change_1h)
+        ? { change_1h: n(change.change_1h) }
+        : {}),
+      ...(keys.includes("change_7d") && hasNum(change.change_7d)
+        ? { change_7d: n(change.change_7d) }
+        : {}),
+    } as AnyIndicator;
   });
 }
-
 
 function writePersonalMarketDetailSeed(type: MarketType, item: AnyIndicator) {
   if (typeof window === "undefined") return;
@@ -1244,89 +1281,6 @@ function writePersonalMarketDetailSeed(type: MarketType, item: AnyIndicator) {
     );
     window.sessionStorage.setItem("cain:personal-market-detail-seed", JSON.stringify(payload));
   } catch {}
-}
-
-function runWhenIdle(task: () => void, timeout = 1200) {
-  if (typeof window === "undefined") return;
-
-  const requestIdle = (window as any).requestIdleCallback;
-  if (typeof requestIdle === "function") {
-    requestIdle(task, { timeout });
-    return;
-  }
-
-  window.setTimeout(task, Math.min(timeout, 500));
-}
-
-function warmPersonalMarketDetail(type: MarketType, symbol: string) {
-  if (typeof window === "undefined") return;
-
-  const normalizedType = normalizeType(type);
-  const normalizedSymbol = normalizeFavoriteSymbol(symbol);
-  if (!normalizedSymbol || normalizedType !== "spot") return;
-
-  const key = `${normalizedType}:${normalizedSymbol}:24h-chart`;
-  if (detailWarmupInFlight.has(key)) return;
-
-  detailWarmupInFlight.add(key);
-
-  runWhenIdle(() => {
-    void fetch(pmApi(`/chart?type=spot&symbol=${encodeURIComponent(normalizedSymbol)}&range=24h`))
-      .catch(() => {})
-      .finally(() => {
-        window.setTimeout(() => detailWarmupInFlight.delete(key), 15_000);
-      });
-  });
-}
-
-
-function warmTopSpotCharts(items: AnyIndicator[]) {
-  if (typeof window === "undefined") return;
-
-  const targets = items
-    .slice(0, 30)
-    .map((item) => normalizeFavoriteSymbol(item.symbol))
-    .filter(Boolean);
-
-  if (!targets.length) return;
-
-  runWhenIdle(() => {
-    let index = 0;
-
-    const warmNext = () => {
-      const symbol = targets[index];
-      index += 1;
-
-      if (symbol) {
-        warmPersonalMarketDetail("spot", symbol);
-      }
-
-      if (index < targets.length) {
-        window.setTimeout(warmNext, 300);
-      }
-    };
-
-    warmNext();
-  }, 2800);
-}
-
-function prefetchOtherPersonalMarketTypes() {
-  if (typeof window === "undefined") return;
-
-  runWhenIdle(() => {
-    for (const targetType of ["domestic-global", "futures-spot"] as MarketType[]) {
-      if (prefetchedMarketTypeCache.has(targetType)) continue;
-
-      void fetch(pmApi(`/indicators?type=${encodeURIComponent(targetType)}`))
-        .then(async (res) => {
-          const json = (await res.json()) as ApiRes;
-          if (res.ok && json?.ok) {
-            prefetchedMarketTypeCache.set(targetType, json);
-          }
-        })
-        .catch(() => {});
-    }
-  }, 1800);
 }
 
 function CoinCell({ item }: { item: AnyIndicator }) {
@@ -1493,14 +1447,6 @@ function DesktopTable({
   const openDetail = (item: AnyIndicator) => {
     writePersonalMarketDetailSeed(type, item);
     router.push(`/personal-markets/${type}/${encodeURIComponent(item.symbol)}`);
-  };
-
-  const prefetchDetail = (item: AnyIndicator) => {
-    const symbol = normalizeFavoriteSymbol(item.symbol);
-    if (!symbol) return;
-
-    router.prefetch(`/personal-markets/${type}/${encodeURIComponent(symbol)}`);
-    warmPersonalMarketDetail(type, symbol);
   };
 
   return (
@@ -1826,8 +1772,6 @@ function DesktopTable({
                 <tr
                   key={`${item.canonical_symbol || item.rank_cg_id || item.rank_name || item.symbol}-${type}-${idx}`}
                   onClick={() => openDetail(item)}
-                  onMouseEnter={() => prefetchDetail(item)}
-                  onFocus={() => prefetchDetail(item)}
                   className={`${rowCls} cursor-pointer`}
                 >
                   <td className="px-4 py-3 align-middle">
@@ -2400,92 +2344,108 @@ export default function TypedPersonalMarketsClient({ type }: { type: string }) {
       try {
         if (marketType === "spot") {
           const isInitialLoad = !hasLoadedRef.current;
+          let indicatorArr: AnyIndicator[] = [];
+          let fullMarketArr: MarketsV2ItemRes[] = [];
 
-          const indicatorsPromise = fetch(pmApi(`/indicators?type=spot`));
-          const topMarketsPromise = fetch(pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0`));
-          const marketsPromise = isInitialLoad
-            ? fetch(pmApi(`/markets?currency=krw&limit=370&offset=30&only_live=0`))
-            : fetch(pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0`));
-          const change7dPromise = fetch(
-            pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0&include_change_7d=1`)
-          )
-            .then(async (res) => {
-              const json = (await res.json()) as MarketsV2Res;
-              if (!res.ok || !json?.ok) return [] as MarketsV2ItemRes[];
-              return Array.isArray(json.items) ? json.items : [];
-            })
-            .catch(() => [] as MarketsV2ItemRes[]);
+          if (isInitialLoad) {
+            const [indicatorsRes, topMarketsRes] = await Promise.all([
+              fetch(pmApi(`/indicators?type=spot`)),
+              fetch(pmApi(`/markets?currency=krw&limit=30&offset=0&only_live=0`)),
+            ]);
 
-          const [indicatorsRes, topMarketsRes] = await Promise.all([
-            indicatorsPromise,
-            topMarketsPromise,
-          ]);
+            const indicatorsJson = (await indicatorsRes.json()) as ApiRes;
+            const topMarketsJson = (await topMarketsRes.json()) as MarketsV2Res;
 
-          const indicatorsJson = (await indicatorsRes.json()) as ApiRes;
-          const topMarketsJson = (await topMarketsRes.json()) as MarketsV2Res;
+            if (!indicatorsRes.ok || !indicatorsJson?.ok || !topMarketsRes.ok || !topMarketsJson?.ok) {
+              throw new Error("fetch_failed");
+            }
 
-          if (!indicatorsRes.ok || !indicatorsJson?.ok || !topMarketsRes.ok || !topMarketsJson?.ok) {
-            throw new Error("fetch_failed");
+            indicatorArr = Array.isArray(indicatorsJson?.payload?.items)
+              ? indicatorsJson.payload.items
+              : Object.values(indicatorsJson?.payload?.indicators || {});
+
+            const topMarketArr = Array.isArray(topMarketsJson.items) ? topMarketsJson.items : [];
+            fullMarketArr = topMarketArr;
+
+            const topArr = stripSpotDeferredChanges(
+              mergeSpotIndicatorsWithMarkets(indicatorArr, topMarketArr)
+            );
+
+            if (!cancelled) {
+              setItems((prev) => preserveSpotDeferredChanges(topArr, prev));
+              hasLoadedRef.current = true;
+              setLoading(false);
+            }
+
+            const restMarketsRes = await fetch(
+              pmApi(`/markets?currency=krw&limit=370&offset=30&only_live=0`)
+            );
+            const restMarketsJson = (await restMarketsRes.json()) as MarketsV2Res;
+
+            if (!restMarketsRes.ok || !restMarketsJson?.ok) {
+              throw new Error("fetch_failed");
+            }
+
+            const restMarketArr = Array.isArray(restMarketsJson.items) ? restMarketsJson.items : [];
+            fullMarketArr = [...topMarketArr, ...restMarketArr];
+          } else {
+            const [indicatorsRes, marketsRes] = await Promise.all([
+              fetch(pmApi(`/indicators?type=spot`)),
+              fetch(pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0`)),
+            ]);
+
+            const indicatorsJson = (await indicatorsRes.json()) as ApiRes;
+            const marketsJson = (await marketsRes.json()) as MarketsV2Res;
+
+            if (!indicatorsRes.ok || !indicatorsJson?.ok || !marketsRes.ok || !marketsJson?.ok) {
+              throw new Error("fetch_failed");
+            }
+
+            indicatorArr = Array.isArray(indicatorsJson?.payload?.items)
+              ? indicatorsJson.payload.items
+              : Object.values(indicatorsJson?.payload?.indicators || {});
+
+            fullMarketArr = Array.isArray(marketsJson.items) ? marketsJson.items : [];
           }
 
-          const indicatorArr = Array.isArray(indicatorsJson?.payload?.items)
-            ? indicatorsJson.payload.items
-            : Object.values(indicatorsJson?.payload?.indicators || {});
-
-          const topMarketArr = Array.isArray(topMarketsJson.items) ? topMarketsJson.items : [];
-          const topArr = mergeSpotIndicatorsWithMarkets(indicatorArr, topMarketArr);
-
-          if (!cancelled && isInitialLoad) {
-            setItems((prev) => preserveSpotChange7d(topArr, prev));
-            hasLoadedRef.current = true;
-            setLoading(false);
-            warmTopSpotCharts(topArr);
-          }
-
-          const marketsRes = await marketsPromise;
-          const marketsJson = (await marketsRes.json()) as MarketsV2Res;
-
-          if (!marketsRes.ok || !marketsJson?.ok) {
-            throw new Error("fetch_failed");
-          }
-
-          const marketArr = Array.isArray(marketsJson.items) ? marketsJson.items : [];
-          const fullMarketArr = isInitialLoad ? [...topMarketArr, ...marketArr] : marketArr;
-          const arr = mergeSpotIndicatorsWithMarkets(indicatorArr, fullMarketArr);
+          const arr = stripSpotDeferredChanges(
+            mergeSpotIndicatorsWithMarkets(indicatorArr, fullMarketArr)
+          );
 
           if (!cancelled) {
-            setItems((prev) => preserveSpotChange7d(arr, prev));
+            setItems((prev) => preserveSpotDeferredChanges(arr, prev));
             hasLoadedRef.current = true;
           }
 
-          void change7dPromise.then((change7dMarketArr) => {
-            if (!cancelled && change7dMarketArr.length) {
-              setItems((prev) => mergeSpotChange7d(prev, change7dMarketArr));
-            }
-          });
+          if (!cancelled && fullMarketArr.length) {
+            window.setTimeout(() => {
+              if (!cancelled) {
+                setItems((prev) => mergeSpotChanges(prev, fullMarketArr, ["change_1h"]));
+              }
+            }, 0);
+
+            void fetch(
+              pmApi(`/markets?currency=krw&limit=400&offset=0&only_live=0&include_change_7d=1`)
+            )
+              .then(async (res) => {
+                const json = (await res.json()) as MarketsV2Res;
+                if (!res.ok || !json?.ok) return [] as MarketsV2ItemRes[];
+                return Array.isArray(json.items) ? json.items : [];
+              })
+              .then((change7dMarketArr) => {
+                if (!cancelled && change7dMarketArr.length) {
+                  setItems((prev) => mergeSpotChanges(prev, change7dMarketArr, ["change_7d"]));
+                }
+              })
+              .catch(() => {});
+          }
 
           return;
-        }
-
-        const cachedTypeData = prefetchedMarketTypeCache.get(marketType);
-
-        if (cachedTypeData?.ok && !hasLoadedRef.current) {
-          const cachedArr = Array.isArray(cachedTypeData?.payload?.items)
-            ? cachedTypeData.payload.items
-            : Object.values(cachedTypeData?.payload?.indicators || {});
-
-          if (!cancelled) {
-            setItems(cachedArr);
-            hasLoadedRef.current = true;
-            setLoading(false);
-          }
         }
 
         const res = await fetch(pmApi(`/indicators?type=${encodeURIComponent(marketType)}`));
         const j = (await res.json()) as ApiRes;
         if (!j?.ok) throw new Error("fetch_failed");
-
-        prefetchedMarketTypeCache.set(marketType, j);
 
         const arr = Array.isArray(j?.payload?.items)
           ? j.payload.items
