@@ -10,7 +10,7 @@ import AiBox from "@/components/ai/AiBox";
 import CoinGeckoAttribution from "@/components/CoinGeckoAttribution";
 
 type MarketType = "spot" | "domestic-global" | "futures-spot";
-type RangeKey = "1h" | "24h" | "7d" | "30d" | "90d";
+type RangeKey = "1h" | "24h" | "7d" | "30d" | "90d" | "180d" | "1y" | "all";
 type CurrencyMode = "KRW" | "USD";
 type UnitKey =
   | "usd"
@@ -20,6 +20,10 @@ type UnitKey =
   | "count"
   | "flag"
   | "dominance"
+  | "minutes"
+  | "correlation"
+  | "confidence"
+  | "lead"
   | "unknown";
 
 type ExRow = {
@@ -47,19 +51,40 @@ type AnyIndicator = {
   global_spot_avg_usd?: number | null;
   global_spot_avg_krw?: number | null;
   premium_pct?: number | null;
+  premium_krw_gap?: number | null;
   domestic_spread_krw?: number | null;
+  domestic_spread_pct?: number | null;
+  domestic_high_exchange?: string | null;
+  domestic_high_krw?: number | null;
+  domestic_low_exchange?: string | null;
+  domestic_low_krw?: number | null;
   domestic_exchange_count?: number | null;
 
   global_avg_usd?: number | null;
   global_spread_usd?: number | null;
+  global_spread_krw?: number | null;
   global_spread_pct?: number | null;
+  global_spot_high_exchange?: string | null;
+  global_spot_high_usd?: number | null;
+  global_spot_low_exchange?: string | null;
+  global_spot_low_usd?: number | null;
   volatility_ratio?: number | null;
   volatility_warn?: boolean;
   global_spot_exchange_count?: number | null;
 
   global_futures_avg_usd?: number | null;
   basis_pct?: number | null;
+  price_gap_usd?: number | null;
   delay_proxy?: number | null;
+  structure_divergence_score?: number | null;
+  lead_market?: string | null;
+  lag_minutes?: number | null;
+  lead_correlation?: number | null;
+  lead_confidence?: number | null;
+  futures_high_exchange?: string | null;
+  futures_high_usd?: number | null;
+  futures_low_exchange?: string | null;
+  futures_low_usd?: number | null;
   global_perp_exchange_count?: number | null;
 
   price?: number | null;
@@ -134,9 +159,17 @@ function resolveDetailItem(data: DetailRes | null): AnyIndicator | null {
   return null;
 }
 
+type ApiChartTooltipRow = {
+  label: string;
+  value: string;
+};
+
 type ApiChartPoint = {
   ts: string;
   value: number | null;
+  meta?: {
+    tooltipRows?: ApiChartTooltipRow[];
+  };
 };
 
 type ApiChartSeries = {
@@ -218,7 +251,10 @@ function chartCacheTtl(range: RangeKey) {
   if (range === "24h") return 45_000;
   if (range === "7d") return 120_000;
   if (range === "30d") return 300_000;
-  return 0;
+  if (range === "90d") return 600_000;
+  if (range === "180d") return 900_000;
+  if (range === "1y") return 1_800_000;
+  return 3_600_000;
 }
 
 function n(v: unknown, d = 0) {
@@ -235,6 +271,7 @@ function avg(values: number[]) {
 }
 
 function isFiniteNum(value: unknown) {
+  if (value === null || value === undefined || value === "") return false;
   return Number.isFinite(Number(value));
 }
 
@@ -638,7 +675,10 @@ function getSummaryInfoText(label: string) {
     "현물 평균가": "글로벌 현물 거래소 가격들을 평균낸 값입니다.\n선물 가격과 비교하는 기준 현물가입니다.",
     "선물 평균가": "글로벌 선물/Perpetual 거래소 가격들을 평균낸 값입니다.\n현물 가격과 비교해 베이시스를 판단합니다.",
     "베이시스 vs 24h 평균": "현재 베이시스가 최근 24시간 평균보다 높은지 낮은지 보여줍니다.\n선물/현물 구조가 평소보다 벌어졌는지 확인합니다.",
-    "동조/지연": "현물과 선물 가격 반응이 얼마나 맞물리는지 보는 보조 지표입니다.\n값이 커지면 둘 사이의 반응 차이가 커진 상태로 볼 수 있습니다.",
+    "동조/지연": "현물과 선물 중 어느 시장이 먼저 움직였고 다른 시장이 몇 분 뒤따랐는지 보여줍니다.\n중립은 뚜렷한 선도 시장이 없다는 뜻입니다.",
+    "구조 괴리도": "베이시스, 현물·선물 수익률 차이, 동조 약화를 합친 0~100 구조 점수입니다.\n높을수록 현물과 선물 구조가 평소보다 더 어긋난 상태입니다.",
+    "동조 상관도": "현물과 선물 움직임이 얼마나 함께 움직였는지 -1~1 범위로 보여줍니다.\n1에 가까울수록 같은 방향으로 강하게 동조합니다.",
+    "선도 시장": "현물과 선물 중 가격 움직임이 먼저 나타난 시장과 추정 지연 시간을 표시합니다.\n표본이나 신뢰도가 부족하면 데이터 축적 중으로 표시됩니다.",
   };
 
   return map[key] || "해당 항목은 현재 상세 화면의 판단 보조 지표입니다.\n수치 하나만 보지 말고 주변 지표와 함께 확인하는 용도입니다.";
@@ -737,7 +777,7 @@ function aiDefaultPrompt(type: MarketType) {
     return "현재 국내/해외 괴리 구조를 한국어로 쉽게 설명형으로 요약하고, 괴리율·실제 원화 차이·국내 분산 관점에서 어떤 상태인지 정리해줘";
   }
   if (type === "futures-spot") {
-    return "현재 선물/현물 구조를 한국어로 쉽게 설명형으로 요약하고, 베이시스·실제 달러 가격차·동조/지연 관점에서 어떤 상태인지 정리해줘";
+    return "현재 선물/현물 구조를 한국어로 쉽게 설명형으로 요약하고, 베이시스·실제 달러 가격차·구조 괴리도·동조 상관도·선도 시장·지연 시간 관점에서 어떤 상태인지 정리해줘";
   }
   return "현재 글로벌 현물 구조를 한국어로 쉽게 설명형으로 요약하고, 평균가·거래소 벌어짐·단기 흔들림 관점에서 어떤 상태인지 정리해줘";
 }
@@ -747,7 +787,7 @@ function aiHelperText(type: MarketType) {
     return "* 현재 괴리율, 실제 원화 차이, 평균가, 환율, 거래소 가격 등 핵심 데이터만 AI에 전달됩니다.";
   }
   if (type === "futures-spot") {
-    return "* 현재 베이시스, 실제 달러 가격차, 평균가, 지연, 거래소 가격 등 핵심 데이터만 AI에 전달됩니다.";
+    return "* 현재 베이시스, 실제 달러 가격차, 구조 괴리도, 동조 상관도, 선도 시장, 지연 시간, 거래소 가격 등 핵심 데이터만 AI에 전달됩니다.";
   }
   return "* 현재 글로벌 평균가, 거래소 벌어짐, 단기 흔들림, 거래소 가격 등 핵심 데이터만 AI에 전달됩니다.";
 }
@@ -1670,6 +1710,14 @@ function unitText(unit: UnitKey, value: number | null, digits = 3) {
     if (value < -0.1) return "해외 우위";
     return "중립";
   }
+  if (unit === "minutes") return `${Math.round(value)}분`;
+  if (unit === "correlation") return value.toFixed(4);
+  if (unit === "confidence") return `${(value * 100).toFixed(1)}%`;
+  if (unit === "lead") {
+    if (value > 0.5) return "현물 선도";
+    if (value < -0.5) return "선물 선도";
+    return "중립";
+  }
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
@@ -1711,45 +1759,83 @@ function dominanceToNumber(value: string | null | undefined) {
   return null;
 }
 
+function leadMarketToNumber(value: string | null | undefined) {
+  const v = String(value || "").toUpperCase();
+  if (v === "SPOT") return 1;
+  if (v === "FUTURES") return -1;
+  if (v === "NEUTRAL") return 0;
+  return null;
+}
+
+function leadMarketText(value: string | null | undefined, lagMinutes?: number | null) {
+  const v = String(value || "").toUpperCase();
+  const lag = isFiniteNum(lagMinutes) ? `${Math.round(Number(lagMinutes))}분` : null;
+
+  if (v === "SPOT") return lag ? `현물 선도 · ${lag}` : "현물 선도";
+  if (v === "FUTURES") return lag ? `선물 선도 · ${lag}` : "선물 선도";
+  if (v === "NEUTRAL") return "중립";
+  return "데이터 축적 중";
+}
+
 function deriveCurrentValueForKey(item: AnyIndicator, key: string): number | null {
   switch (key) {
     case "global_avg_usd":
-      return Number.isFinite(Number(item.global_avg_usd)) ? Number(item.global_avg_usd) : Number(item.global_spot_avg_usd ?? null);
+      return isFiniteNum(item.global_avg_usd)
+        ? Number(item.global_avg_usd)
+        : isFiniteNum(item.global_spot_avg_usd)
+          ? Number(item.global_spot_avg_usd)
+          : null;
     case "global_spread_pct":
-      return Number(item.global_spread_pct ?? null);
+      return isFiniteNum(item.global_spread_pct) ? Number(item.global_spread_pct) : null;
     case "global_spread_usd":
-      return Number(item.global_spread_usd ?? null);
+      return isFiniteNum(item.global_spread_usd) ? Number(item.global_spread_usd) : null;
     case "global_spread_krw":
-      return null;
+      return isFiniteNum(item.global_spread_krw) ? Number(item.global_spread_krw) : null;
     case "volatility_ratio":
-      return Number(item.volatility_ratio ?? null);
+      return isFiniteNum(item.volatility_ratio) ? Number(item.volatility_ratio) : null;
     case "premium_pct":
-      return Number(item.premium_pct ?? null);
+      return isFiniteNum(item.premium_pct) ? Number(item.premium_pct) : null;
     case "premium_krw_gap":
-      if (Number.isFinite(Number(item.domestic_avg_krw)) && Number.isFinite(Number(item.global_spot_avg_krw))) {
+      if (isFiniteNum(item.premium_krw_gap)) return Number(item.premium_krw_gap);
+      if (isFiniteNum(item.domestic_avg_krw) && isFiniteNum(item.global_spot_avg_krw)) {
         return Number(item.domestic_avg_krw) - Number(item.global_spot_avg_krw);
       }
       return null;
     case "domestic_spread_krw":
-      return Number(item.domestic_spread_krw ?? null);
+      return isFiniteNum(item.domestic_spread_krw) ? Number(item.domestic_spread_krw) : null;
     case "domestic_avg_krw":
-      return Number(item.domestic_avg_krw ?? null);
+      return isFiniteNum(item.domestic_avg_krw) ? Number(item.domestic_avg_krw) : null;
     case "global_spot_avg_krw":
-      return Number(item.global_spot_avg_krw ?? null);
+      return isFiniteNum(item.global_spot_avg_krw) ? Number(item.global_spot_avg_krw) : null;
     case "basis_pct":
-      return Number(item.basis_pct ?? null);
+      return isFiniteNum(item.basis_pct) ? Number(item.basis_pct) : null;
     case "price_gap_usd":
-      if (Number.isFinite(Number(item.global_futures_avg_usd)) && Number.isFinite(Number(item.global_spot_avg_usd))) {
+      if (isFiniteNum(item.price_gap_usd)) return Number(item.price_gap_usd);
+      if (isFiniteNum(item.global_futures_avg_usd) && isFiniteNum(item.global_spot_avg_usd)) {
         return Number(item.global_futures_avg_usd) - Number(item.global_spot_avg_usd);
       }
       return null;
     case "global_spot_avg_usd":
-      return Number(item.global_spot_avg_usd ?? null);
+      return isFiniteNum(item.global_spot_avg_usd) ? Number(item.global_spot_avg_usd) : null;
     case "global_futures_avg_usd":
-      return Number(item.global_futures_avg_usd ?? null);
+      return isFiniteNum(item.global_futures_avg_usd) ? Number(item.global_futures_avg_usd) : null;
     case "delay_proxy":
-      return Number(item.delay_proxy ?? null);
+      return isFiniteNum(item.delay_proxy) ? Number(item.delay_proxy) : null;
+    case "structure_divergence_score":
+      return isFiniteNum(item.structure_divergence_score) ? Number(item.structure_divergence_score) : null;
+    case "lead_correlation":
+      return isFiniteNum(item.lead_correlation) ? Number(item.lead_correlation) : null;
+    case "lead_confidence":
+      return isFiniteNum(item.lead_confidence) ? Number(item.lead_confidence) : null;
+    case "lead_market_signal":
+      return leadMarketToNumber(item.lead_market);
+    case "lag_minutes":
+      return isFiniteNum(item.lag_minutes) ? Number(item.lag_minutes) : null;
     case "dominance":
+      if (isFiniteNum(item.premium_krw_gap)) {
+        const gap = Number(item.premium_krw_gap);
+        return gap > 0 ? 1 : gap < 0 ? -1 : 0;
+      }
       return dominanceToNumber(item.state);
     default:
       return null;
@@ -1793,7 +1879,7 @@ function prepareSeries(
 ) {
   const source = chartData?.series || [];
 
-  if (range === "7d" || range === "30d" || range === "90d") {
+  if (range !== "1h" && range !== "24h") {
     return source;
   }
 
@@ -1806,48 +1892,68 @@ function buildViews(type: MarketType, allSeries: ApiChartSeries[]) {
 
   if (type === "domestic-global") {
     if (has("domestic_avg_krw") && has("global_spot_avg_krw")) {
-      views.push({ key: "compare-krw", label: "국내 vs 해외 환산가", description: "국내 평균가와 해외 환산가를 비교합니다.", seriesKeys: ["domestic_avg_krw", "global_spot_avg_krw"] });
+      views.push({ key: "compare-krw", label: "국내 vs 해외 환산가", description: "국내 평균가와 해외 환산가를 비교하고 시점별 최고·최저 거래소를 툴팁에서 확인합니다.", seriesKeys: ["domestic_avg_krw", "global_spot_avg_krw"] });
     }
     if (has("premium_pct")) {
       views.push({ key: "premium", label: "괴리율", description: "국내/해외 괴리율 흐름을 봅니다.", seriesKeys: ["premium_pct"] });
     }
     if (has("premium_krw_gap")) {
-      views.push({ key: "gap-krw", label: "실제 원화 차이", description: "퍼센트가 아니라 실제 원화 차이를 봅니다.", seriesKeys: ["premium_krw_gap"] });
+      views.push({ key: "gap-krw", label: "실제 원화 차이", description: "퍼센트가 아니라 1코인 기준 실제 원화 차이를 봅니다.", seriesKeys: ["premium_krw_gap"] });
     }
     if (has("domestic_spread_krw")) {
-      views.push({ key: "domestic-spread", label: "국내 분산", description: "국내 거래소 내부 가격 차를 봅니다.", seriesKeys: ["domestic_spread_krw"] });
+      views.push({ key: "domestic-spread", label: "국내 분산", description: "국내 거래소 내부 최고-최저 가격 차와 해당 거래소를 봅니다.", seriesKeys: ["domestic_spread_krw"] });
+    }
+    if (has("global_spread_krw")) {
+      views.push({ key: "global-spread", label: "해외 분산", description: "해외 거래소 내부 최고-최저 원화 환산 가격 차와 해당 거래소를 봅니다.", seriesKeys: ["global_spread_krw"] });
     }
     if (has("dominance")) {
-      views.push({ key: "dominance", label: "주도권", description: "국내 우위/해외 우위 상태를 봅니다.", seriesKeys: ["dominance"] });
+      views.push({ key: "dominance", label: "가격 우위", description: "실제 원화 차이 기준 국내 우위/해외 우위 상태를 봅니다.", seriesKeys: ["dominance"] });
     }
   } else if (type === "futures-spot") {
     if (has("global_spot_avg_usd") && has("global_futures_avg_usd")) {
-      views.push({ key: "spot-vs-futures", label: "현물 vs 선물", description: "현물 평균가와 선물 평균가를 함께 비교합니다.", seriesKeys: ["global_spot_avg_usd", "global_futures_avg_usd"] });
+      views.push({ key: "spot-vs-futures", label: "현물 vs 선물", description: "현물 평균가와 선물 평균가를 함께 비교하고 시점별 최고·최저 거래소를 확인합니다.", seriesKeys: ["global_spot_avg_usd", "global_futures_avg_usd"] });
     }
     if (has("basis_pct")) {
       views.push({ key: "basis", label: "베이시스", description: "선물-현물 기준 베이시스 흐름을 봅니다.", seriesKeys: ["basis_pct"] });
     }
     if (has("price_gap_usd")) {
-      views.push({ key: "gap-usd", label: "실제 달러 가격차", description: "한 코인 기준 실제 달러 가격 차이를 봅니다.", seriesKeys: ["price_gap_usd"] });
+      views.push({ key: "gap-usd", label: "실제 달러 가격차", description: "1코인 기준 선물 평균가와 현물 평균가의 실제 달러 차이를 봅니다.", seriesKeys: ["price_gap_usd"] });
     }
-    if (has("delay_proxy")) {
-      views.push({ key: "delay", label: "동조/지연", description: "현물·선물 동조/지연 상태를 봅니다.", seriesKeys: ["delay_proxy"] });
+    if (has("structure_divergence_score")) {
+      views.push({ key: "structure", label: "구조 괴리도", description: "베이시스·수익률 차이·동조 약화를 합친 구조 괴리 점수를 봅니다.", seriesKeys: ["structure_divergence_score"] });
+    }
+    if (has("lead_correlation") || has("lead_confidence")) {
+      views.push({
+        key: "correlation",
+        label: "동조도 / 신뢰도",
+        description: "현물·선물 최적 시차 상관도와 선도·지연 판정 신뢰도를 함께 봅니다.",
+        seriesKeys: ["lead_correlation", "lead_confidence"].filter(has),
+      });
+    }
+    if (has("lead_market_signal")) {
+      views.push({ key: "lead-market", label: "선도 시장", description: "현물 선도·중립·선물 선도 상태를 봅니다.", seriesKeys: ["lead_market_signal"] });
+    }
+    if (has("lag_minutes")) {
+      views.push({ key: "lag", label: "지연 시간", description: "선도 시장과 후행 시장 사이의 추정 지연 시간을 분 단위로 봅니다.", seriesKeys: ["lag_minutes"] });
+    }
+    if (!has("structure_divergence_score") && !has("lead_correlation") && has("delay_proxy")) {
+      views.push({ key: "delay", label: "레거시 구조 점수", description: "신규 구조 지표가 없는 과거 구간의 기존 복합 점수입니다.", seriesKeys: ["delay_proxy"] });
     }
   } else {
     if (has("global_avg_usd")) {
-      views.push({ key: "price", label: "글로벌 평균가", description: "글로벌 평균가 흐름을 봅니다.", seriesKeys: ["global_avg_usd"] });
+      views.push({ key: "price", label: "글로벌 평균가", description: "글로벌 평균가 흐름과 시점별 최고·최저 거래소를 봅니다.", seriesKeys: ["global_avg_usd"] });
     }
     if (has("global_spread_pct")) {
       views.push({
         key: "spread-pct",
         label: "거래소 벌어짐",
-        description: "거래소 간 가격 차 비율을 봅니다. 툴팁에서 USD 차이도 함께 확인할 수 있습니다.",
+        description: "거래소 간 가격 차 비율을 봅니다. 툴팁에서 실제 USD 차이와 시점별 최고·최저 거래소도 확인할 수 있습니다.",
         seriesKeys: ["global_spread_pct"],
         tooltipSeriesKeys: ["global_spread_usd"],
       });
     }
     if (has("global_spread_usd")) {
-      views.push({ key: "spread-usd", label: "실제 USD 차이", description: "거래소 간 실제 달러 차이를 봅니다.", seriesKeys: ["global_spread_usd"] });
+      views.push({ key: "spread-usd", label: "실제 USD 차이", description: "거래소 간 실제 달러 차이와 시점별 최고·최저 거래소를 봅니다.", seriesKeys: ["global_spread_usd"] });
     }
   }
 
@@ -1921,7 +2027,9 @@ function niceStep(raw: number) {
 function buildTicks(min: number, max: number, unit: UnitKey) {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
   if (unit === "flag") return [0, 1];
-  if (unit === "dominance") return [-1, 0, 1];
+  if (unit === "dominance" || unit === "lead") return [-1, 0, 1];
+  if (unit === "correlation") return [-1, -0.5, 0, 0.5, 1];
+  if (unit === "confidence") return [0, 0.25, 0.5, 0.75, 1];
 
   let yMin = min;
   let yMax = max;
@@ -1956,6 +2064,14 @@ function axisLabelText(unit: UnitKey, value: number) {
   if (unit === "dominance") {
     if (value > 0.5) return "국내";
     if (value < -0.5) return "해외";
+    return "중립";
+  }
+  if (unit === "minutes") return `${Math.round(value)}분`;
+  if (unit === "correlation") return value.toFixed(2);
+  if (unit === "confidence") return `${Math.round(value * 100)}%`;
+  if (unit === "lead") {
+    if (value > 0.5) return "현물";
+    if (value < -0.5) return "선물";
     return "중립";
   }
   return `${value}`;
@@ -2047,7 +2163,20 @@ function TimeSeriesChart({
   const activePoint = points[activeIndex];
   const activeX = xForIndex(activeIndex);
   const xTickIndexes = [0, Math.floor((points.length - 1) / 3), Math.floor(((points.length - 1) * 2) / 3), points.length - 1];
-  const exchangeExtremes = exchangeRows ? getExtremes(exchangeRows) : null;
+  const pointTooltipRows = series
+    .flatMap((entry) => {
+      const point = entry.data.find((candidate) => candidate.ts === activePoint.ts);
+      return point?.meta?.tooltipRows || [];
+    })
+    .filter((row, index, rows) =>
+      rows.findIndex((candidate) => candidate.label === row.label && candidate.value === row.value) === index
+    );
+
+  const exchangeExtremes =
+    pointTooltipRows.length === 0 && activeIndex === points.length - 1 && exchangeRows
+      ? getExtremes(exchangeRows)
+      : null;
+
   const extraTooltipRows = extraTooltipSeries
     .map((entry) => {
       const value = activePoint.values[entry.key];
@@ -2179,8 +2308,8 @@ function TimeSeriesChart({
             );
           })}
 
-          <g transform={`translate(${clamp(activeX - 90, paddingLeft + 4, width - paddingRight - 186)}, 16)`}>
-            <rect x={0} y={0} width={186} height={34 + (series.length + extraTooltipRows.length + (exchangeExtremes?.highest && exchangeExtremes?.lowest ? 2 : 0)) * 18} rx={12} fill="rgba(0,0,0,0.82)" stroke="rgba(255,255,255,0.08)" />
+          <g transform={`translate(${clamp(activeX - 132, paddingLeft + 4, width - paddingRight - 264)}, 16)`}>
+            <rect x={0} y={0} width={264} height={34 + (series.length + extraTooltipRows.length + pointTooltipRows.length + (exchangeExtremes?.highest && exchangeExtremes?.lowest ? 2 : 0)) * 18} rx={12} fill="rgba(0,0,0,0.82)" stroke="rgba(255,255,255,0.08)" />
             <text x={12} y={16} fontSize="11" fill="rgba(255,255,255,0.85)">
               {fmtDateTime(activePoint.ts)}
             </text>
@@ -2190,7 +2319,7 @@ function TimeSeriesChart({
                 <g key={`tip-${entry.key}`} transform={`translate(12, ${30 + entryIndex * 18})`}>
                   <circle cx={4} cy={-4} r={4} fill={chartColor(entryIndex)} />
                   <text x={14} y={0} fontSize="11" fill="rgba(255,255,255,0.8)">{entry.label}</text>
-                  <text x={174} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.92)">
+                  <text x={252} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.92)">
                     {unitText(entry.unit, typeof value === "number" ? value : null, 3)}
                   </text>
                 </g>
@@ -2202,19 +2331,28 @@ function TimeSeriesChart({
                 <g key={`tip-extra-${row.key}`} transform={`translate(12, ${y})`}>
                   <circle cx={4} cy={-4} r={4} fill={row.color} />
                   <text x={14} y={0} fontSize="11" fill="rgba(255,255,255,0.78)">{row.label}</text>
-                  <text x={174} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.90)">{row.value}</text>
+                  <text x={252} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.90)">{row.value}</text>
+                </g>
+              );
+            })}
+            {pointTooltipRows.map((row, metaIndex) => {
+              const y = 30 + (series.length + extraTooltipRows.length + metaIndex) * 18;
+              return (
+                <g key={`tip-meta-${row.label}-${metaIndex}`} transform={`translate(12, ${y})`}>
+                  <text x={0} y={0} fontSize="11" fill="rgba(255,255,255,0.70)">{row.label}</text>
+                  <text x={252} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.90)">{row.value}</text>
                 </g>
               );
             })}
             {exchangeExtremes?.highest && exchangeExtremes?.lowest ? (
               <>
-                <g transform={`translate(12, ${30 + (series.length + extraTooltipRows.length) * 18})`}>
+                <g transform={`translate(12, ${30 + (series.length + extraTooltipRows.length + pointTooltipRows.length) * 18})`}>
                   <text x={0} y={0} fontSize="11" fill="rgba(255,255,255,0.7)">최고 {exchangeExtremes.highest.name}</text>
-                  <text x={174} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.88)">{fmtUsd(exchangeExtremes.highest.price, 4)}</text>
+                  <text x={252} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.88)">{fmtUsd(exchangeExtremes.highest.price, 4)}</text>
                 </g>
-                <g transform={`translate(12, ${30 + (series.length + extraTooltipRows.length + 1) * 18})`}>
+                <g transform={`translate(12, ${30 + (series.length + extraTooltipRows.length + pointTooltipRows.length + 1) * 18})`}>
                   <text x={0} y={0} fontSize="11" fill="rgba(255,255,255,0.7)">최저 {exchangeExtremes.lowest.name}</text>
-                  <text x={174} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.88)">{fmtUsd(exchangeExtremes.lowest.price, 4)}</text>
+                  <text x={252} y={0} textAnchor="end" fontSize="11" fill="rgba(255,255,255,0.88)">{fmtUsd(exchangeExtremes.lowest.price, 4)}</text>
                 </g>
               </>
             ) : null}
@@ -2351,10 +2489,18 @@ function ChartWorkspace({
             트레이딩뷰 차트 열기
           </Link>
           <SectionPills
-            options={(["1h", "24h", "7d", "30d", "90d"] as RangeKey[]).map((value) => ({ key: value, label: value }))}
+            options={[
+              { key: "1h", label: "1h" },
+              { key: "24h", label: "24h" },
+              { key: "7d", label: "7d" },
+              { key: "30d", label: "30d" },
+              { key: "90d", label: "90d" },
+              { key: "180d", label: "180d" },
+              { key: "1y", label: "1y" },
+              { key: "all", label: "전체" },
+            ]}
             value={chartRange}
             onChange={(value) => setChartRange(value as RangeKey)}
-            disabledKeys={["90d"]}
           />
         </div>
       </div>
@@ -2797,7 +2943,9 @@ function MobileDomesticGlobalOverview({ item }: { item: AnyIndicator }) {
   const globalRows = item.exchanges?.global_spot_usd || [];
   const premium = n(item.premium_pct);
   const sideText = premium > 0 ? "국내 우위" : premium < 0 ? "해외 우위" : "중립";
-  const globalGapKrw = n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
+  const globalGapKrw = isFiniteNum(item.premium_krw_gap)
+    ? Number(item.premium_krw_gap)
+    : n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
 
   return (
     <MobileDetailOverviewShell
@@ -2830,14 +2978,20 @@ function MobileFuturesSpotOverview({ item }: { item: AnyIndicator }) {
   const futuresRows = item.exchanges?.global_futures_usd || [];
   const spotAvg = n(item.global_spot_avg_usd);
   const futuresAvg = n(item.global_futures_avg_usd);
-  const priceGap = futuresAvg - spotAvg;
+  const priceGap = isFiniteNum(item.price_gap_usd)
+    ? Number(item.price_gap_usd)
+    : futuresAvg - spotAvg;
   const basis = n(item.basis_pct);
   const sideText = basis >= 0 ? "선물 프리미엄" : "선물 할인";
+  const leadText = leadMarketText(item.lead_market, item.lag_minutes);
+  const correlationText = isFiniteNum(item.lead_correlation)
+    ? Number(item.lead_correlation).toFixed(4)
+    : "-";
 
   return (
     <MobileDetailOverviewShell
       title="모바일 핵심 지표"
-      description="선물과 현물의 가격 차이, 베이시스, 지연 상태를 먼저 확인합니다."
+      description="선물과 현물의 가격 차이, 구조 괴리도, 동조·선도·지연을 먼저 확인합니다."
     >
       <div className="grid grid-cols-2 gap-2">
         <MobileDetailMetricCard
@@ -2849,7 +3003,24 @@ function MobileFuturesSpotOverview({ item }: { item: AnyIndicator }) {
         <MobileDetailMetricCard label="실제 달러 가격차" value={fmtSignedUsd(priceGap, 6)} sub="선물-현물" />
         <MobileDetailMetricCard label="현물 평균가" value={fmtUsd(item.global_spot_avg_usd, 6)} sub={`${spotRows.length}개 거래소`} />
         <MobileDetailMetricCard label="선물 평균가" value={fmtUsd(item.global_futures_avg_usd, 6)} sub={`${futuresRows.length}개 거래소`} />
-        <MobileDetailMetricCard label="동조/지연" value={fmtPct(item.delay_proxy, 3)} sub="현물·선물 반응 차이" valueClassName="text-[var(--brand)]" />
+        <MobileDetailMetricCard
+          label="구조 괴리도"
+          value={isFiniteNum(item.structure_divergence_score) ? `${Number(item.structure_divergence_score).toFixed(1)}/100` : "-"}
+          sub="높을수록 구조 이탈 확대"
+          valueClassName="text-[var(--brand)]"
+        />
+        <MobileDetailMetricCard
+          label="선도/지연"
+          value={leadText}
+          sub={`상관도 ${correlationText}`}
+          valueClassName="text-[var(--brand)]"
+        />
+        <MobileDetailMetricCard
+          label="판정 신뢰도"
+          value={isFiniteNum(item.lead_confidence) ? `${(Number(item.lead_confidence) * 100).toFixed(1)}%` : "-"}
+          sub="동조·선도 판정"
+          valueClassName="text-[var(--brand)]"
+        />
         <MobileDetailMetricCard label="거래소 수" value={`${spotRows.length}/${futuresRows.length}개`} sub="현물/선물" valueClassName="text-[var(--brand)]" />
       </div>
     </MobileDetailOverviewShell>
@@ -2953,7 +3124,9 @@ function DomesticGlobalDetail({
   const globalRows = item.exchanges?.global_spot_usd || [];
   const premium = n(item.premium_pct);
   const sideText = premium > 0 ? "국내가 더 높은 편" : premium < 0 ? "해외가 더 높은 편" : "중립";
-  const globalGapKrw = n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
+  const globalGapKrw = isFiniteNum(item.premium_krw_gap)
+    ? Number(item.premium_krw_gap)
+    : n(item.domestic_avg_krw) - n(item.global_spot_avg_krw);
   const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const premiumSeries = preparedSeries.find((entry) => entry.key === "premium_pct");
   const premiumPosition = useMemo(
@@ -3040,8 +3213,14 @@ function FuturesSpotDetail({
   const basis = n(item.basis_pct);
   const spotAvg = n(item.global_spot_avg_usd);
   const futuresAvg = n(item.global_futures_avg_usd);
-  const priceGap = futuresAvg - spotAvg;
+  const priceGap = isFiniteNum(item.price_gap_usd)
+    ? Number(item.price_gap_usd)
+    : futuresAvg - spotAvg;
   const sideText = basis >= 0 ? "선물 프리미엄" : "선물 할인";
+  const leadText = leadMarketText(item.lead_market, item.lag_minutes);
+  const correlationText = isFiniteNum(item.lead_correlation)
+    ? Number(item.lead_correlation).toFixed(4)
+    : "-";
   const preparedSeries = useMemo(() => prepareSeries(chartData, item, chartRange), [chartData, item]);
   const basisSeries = preparedSeries.find((entry) => entry.key === "basis_pct");
   const basisPosition = useMemo(
@@ -3093,7 +3272,9 @@ function FuturesSpotDetail({
             { label: "현물 평균가", value: fmtUsd(item.global_spot_avg_usd, 6), sub: `현물 ${spotRows.length}개` },
             { label: "선물 평균가", value: fmtUsd(item.global_futures_avg_usd, 6), sub: `선물 ${futuresRows.length}개` },
             { label: "베이시스 vs 24h 평균", value: basisPosition.value, sub: basisPosition.sub },
-            { label: "동조/지연", value: fmtPct(item.delay_proxy, 3), sub: `현물 ${spotRows.length}개 / 선물 ${futuresRows.length}개` },
+            { label: "구조 괴리도", value: isFiniteNum(item.structure_divergence_score) ? `${Number(item.structure_divergence_score).toFixed(1)}/100` : "-", sub: "베이시스·수익률 차이·동조 약화 종합" },
+            { label: "선도 시장", value: leadText, sub: `동조 상관도 ${correlationText}` },
+            { label: "동조 상관도", value: correlationText, sub: isFiniteNum(item.lead_confidence) ? `판정 신뢰도 ${(Number(item.lead_confidence) * 100).toFixed(1)}%` : "판정 데이터 축적 중" },
           ]}
         />
 
@@ -3351,7 +3532,13 @@ export default function TypedPersonalMarketDetailClient({
       global_spread_usd: item.global_spread_usd ?? null,
       global_spread_pct: item.global_spread_pct ?? null,
       basis_pct: item.basis_pct ?? null,
+      price_gap_usd: item.price_gap_usd ?? null,
       delay_proxy: item.delay_proxy ?? null,
+      structure_divergence_score: item.structure_divergence_score ?? null,
+      lead_market: item.lead_market ?? null,
+      lag_minutes: item.lag_minutes ?? null,
+      lead_correlation: item.lead_correlation ?? null,
+      lead_confidence: item.lead_confidence ?? null,
       volatility_ratio: item.volatility_ratio ?? null,
       volatility_warn: item.volatility_warn ?? null,
       domestic_exchange_count: item.domestic_exchange_count ?? null,
