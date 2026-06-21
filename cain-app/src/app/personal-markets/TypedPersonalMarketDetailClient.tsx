@@ -214,6 +214,13 @@ type ChartRes = {
     supportedRanges?: string[];
     availableSeriesKeys?: string[];
     notes?: string[];
+    coverage?: {
+      firstTs?: string | null;
+      lastTs?: string | null;
+      availableDays?: number;
+      requestedDays?: number | null;
+      complete?: boolean;
+    };
   };
   error?: string;
 };
@@ -1721,7 +1728,7 @@ function unitText(unit: UnitKey, value: number | null, digits = 3) {
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function formatAxisTime(ts: string, range: RangeKey) {
+function formatAxisTime(ts: string, range: RangeKey, isLatest = false) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
 
@@ -1729,16 +1736,83 @@ function formatAxisTime(ts: string, range: RangeKey) {
     return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
   }
 
-  if (range === "24h") {
-    return d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (range === "24h" || range === "7d") {
+    return d.toLocaleString("ko-KR", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
-  if (range === "7d") {
-    return d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (isLatest) {
+    return d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
   }
 
   return d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
 }
+
+function isCleanAxisTick(ts: string, range: RangeKey) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return false;
+
+  const minutes = d.getMinutes();
+  const seconds = d.getSeconds();
+
+  if (range === "1h") {
+    return minutes % 15 === 0 && seconds === 0;
+  }
+
+  if (range === "24h" || range === "7d") {
+    return minutes === 0 && seconds === 0;
+  }
+
+  return d.getHours() === 0 && minutes === 0 && seconds === 0;
+}
+
+function buildXAxisTickIndexes(points: SeriesVisualPoint[], range: RangeKey) {
+  if (!points.length) return [] as number[];
+  if (points.length === 1) return [0];
+
+  const lastIndex = points.length - 1;
+  const firstMs = new Date(points[0].ts).getTime();
+  const lastMs = new Date(points[lastIndex].ts).getTime();
+  const cleanIndexes = points
+    .map((point, index) => ({ index, ms: new Date(point.ts).getTime() }))
+    .filter(
+      (entry) =>
+        entry.index < lastIndex &&
+        Number.isFinite(entry.ms) &&
+        isCleanAxisTick(points[entry.index].ts, range),
+    );
+
+  if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs) || !cleanIndexes.length) {
+    return [
+      0,
+      Math.floor(lastIndex / 3),
+      Math.floor((lastIndex * 2) / 3),
+      lastIndex,
+    ].filter((value, index, values) => values.indexOf(value) === index);
+  }
+
+  const targetRatios = [0, 1 / 3, 2 / 3];
+  const selected: number[] = [];
+
+  for (const ratio of targetRatios) {
+    const targetMs = firstMs + (lastMs - firstMs) * ratio;
+    const candidate = [...cleanIndexes]
+      .filter((entry) => !selected.includes(entry.index))
+      .sort((a, b) => Math.abs(a.ms - targetMs) - Math.abs(b.ms - targetMs))[0];
+
+    if (candidate) selected.push(candidate.index);
+  }
+
+  selected.push(lastIndex);
+  return selected
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((a, b) => a - b);
+}
+
 
 function chartColor(index: number) {
   const palette = ["#22d3ee", "#34d399", "#f59e0b", "#a78bfa", "#f87171", "#60a5fa"];
@@ -2162,7 +2236,7 @@ function TimeSeriesChart({
   const activeIndex = clamp(lockedIndex ?? hoverIndex ?? (points.length - 1), 0, points.length - 1);
   const activePoint = points[activeIndex];
   const activeX = xForIndex(activeIndex);
-  const xTickIndexes = [0, Math.floor((points.length - 1) / 3), Math.floor(((points.length - 1) * 2) / 3), points.length - 1];
+  const xTickIndexes = buildXAxisTickIndexes(points, range);
   const pointTooltipRows = series
     .flatMap((entry) => {
       const point = entry.data.find((candidate) => candidate.ts === activePoint.ts);
@@ -2303,7 +2377,7 @@ function TimeSeriesChart({
             const anchor = i === 0 ? "start" : i === xTickIndexes.length - 1 ? "end" : "middle";
             return (
               <text key={`xtick-${i}`} x={x} y={height - 10} textAnchor={anchor} fontSize="11" fill="rgba(255,255,255,0.55)">
-                {formatAxisTime(point.ts, range)}
+                {formatAxisTime(point.ts, range, i === xTickIndexes.length - 1)}
               </text>
             );
           })}
@@ -2458,6 +2532,13 @@ function ChartWorkspace({
       ? item.exchanges?.global_futures_usd || []
       : undefined;
 
+  const coverage = chartData?.meta?.coverage;
+  const requiresFullCoverage = ["90d", "180d", "1y"].includes(chartRange);
+  const rangeStillAccumulating =
+    requiresFullCoverage && coverage?.complete === false;
+  const availableDays = Math.max(0, Number(coverage?.availableDays || 0));
+  const requestedDays = Number(coverage?.requestedDays || 0);
+
   return (
     <section className="rounded-2xl border border-white/10 bg-black/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2514,6 +2595,14 @@ function ChartWorkspace({
         {chartLoading && !chartData ? (
           <div className="rounded-xl border border-white/10 bg-black/60 p-6 text-sm opacity-60">
             차트 데이터를 불러오는 중입니다…
+          </div>
+        ) : rangeStillAccumulating ? (
+          <div className="rounded-xl border border-[color:rgba(0,229,255,0.18)] bg-black/60 p-6">
+            <div className="text-sm font-semibold text-[var(--brand)]">장기 차트 데이터 축적 중</div>
+            <div className="mt-2 text-xs leading-5 text-white/65">
+              {chartRange} 차트는 요청 기간이 실제 데이터로 모두 채워진 뒤 자동으로 열립니다.
+              {requestedDays > 0 ? ` 현재 약 ${availableDays.toFixed(1)}일 / ${Math.round(requestedDays)}일이 축적되었습니다.` : ""}
+            </div>
           </div>
         ) : activeSeries.length ? (
           <TimeSeriesChart

@@ -163,6 +163,13 @@ type ChartResponseBody = {
     supportedRanges: string[];
     availableSeriesKeys: string[];
     notes: string[];
+    coverage: {
+      firstTs: string | null;
+      lastTs: string | null;
+      availableDays: number;
+      requestedDays: number | null;
+      complete: boolean;
+    };
     cache: {
       key: string;
       ttlSeconds: number;
@@ -251,6 +258,27 @@ function rangeToFromIso(range: RangeKey): string {
   }
 
   return new Date(now - map[range]).toISOString();
+}
+
+function rangeDurationMs(range: RangeKey): number | null {
+  const map: Record<Exclude<RangeKey, "all">, number> = {
+    "1h": 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+    "90d": 90 * 24 * 60 * 60 * 1000,
+    "180d": 180 * 24 * 60 * 60 * 1000,
+    "1y": 365 * 24 * 60 * 60 * 1000,
+  };
+
+  return range === "all" ? null : map[range];
+}
+
+function bucketToleranceMs(bucket: ChartResponseBody["meta"]["bucket"]): number {
+  if (bucket === "3m") return 12 * 60 * 1000;
+  if (bucket === "15m") return 45 * 60 * 1000;
+  if (bucket === "1h") return 3 * 60 * 60 * 1000;
+  return 36 * 60 * 60 * 1000;
 }
 
 function targetPointsByRange(range: RangeKey): number {
@@ -606,15 +634,40 @@ function getGlobalSpreadPct(row: SnapshotRow): number | null {
   return (spreadUsd / globalUsd) * 100;
 }
 
+function getGlobalFuturesAvgUsd(row: SnapshotRow): number | null {
+  const direct = toNumberOrNull(row.global_futures_avg_usd);
+  if (direct !== null) return direct;
+
+  const spotAvg = getGlobalAvgUsd(row);
+  const priceGap = toNumberOrNull(row.price_gap_usd);
+  if (spotAvg !== null && priceGap !== null) {
+    return spotAvg + priceGap;
+  }
+
+  const basisPct = getBasisPct(row);
+  if (spotAvg !== null && basisPct !== null) {
+    return spotAvg * (1 + basisPct / 100);
+  }
+
+  return null;
+}
+
 function getPriceGapUsd(row: SnapshotRow): number | null {
   const direct = toNumberOrNull(row.price_gap_usd);
   if (direct !== null) return direct;
 
-  const futuresAvg = toNumberOrNull(row.global_futures_avg_usd);
+  const futuresAvg = getGlobalFuturesAvgUsd(row);
   const spotAvg = getGlobalAvgUsd(row);
-  if (futuresAvg === null || spotAvg === null) return null;
+  if (futuresAvg !== null && spotAvg !== null) {
+    return futuresAvg - spotAvg;
+  }
 
-  return futuresAvg - spotAvg;
+  const basisPct = getBasisPct(row);
+  if (spotAvg !== null && basisPct !== null) {
+    return spotAvg * (basisPct / 100);
+  }
+
+  return null;
 }
 
 function getStructureDivergenceScore(row: SnapshotRow): number | null {
@@ -758,7 +811,7 @@ function buildFuturesSpotSeries(rows: SnapshotRow[]): ChartSeries[] {
       group: "price",
       description: "글로벌 현물 평균가",
     }, buildFuturesStructureMeta),
-    mapSeries(rows, "global_futures_avg_usd", (row) => toNumberOrNull(row.global_futures_avg_usd), {
+    mapSeries(rows, "global_futures_avg_usd", getGlobalFuturesAvgUsd, {
       label: "선물 평균가",
       unit: "usd",
       chartType: "line-compare",
@@ -1018,19 +1071,32 @@ async function fetchChartPoints(
   range: RangeKey,
   fromIso: string,
 ): Promise<SnapshotRow[]> {
-  const { data, error } = await supabase.rpc("get_pm_chart_points_v2", {
-    p_type: toDbMarketType(type),
-    p_symbol: symbolBase,
-    p_range: range,
-    p_from: fromIso,
-    p_to: new Date().toISOString(),
-  });
+  const pageSize = 1000;
+  const maxRows = 20_000;
+  const allRows: Record<string, unknown>[] = [];
 
-  if (error) {
-    throw new Error(`get_pm_chart_points_v2 rpc failed: ${error.message}`);
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const { data, error } = await supabase
+      .rpc("get_pm_chart_points_v2", {
+        p_type: toDbMarketType(type),
+        p_symbol: symbolBase,
+        p_range: range,
+        p_from: fromIso,
+        p_to: new Date().toISOString(),
+      })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(`get_pm_chart_points_v2 rpc failed: ${error.message}`);
+    }
+
+    const page = (data ?? []) as Record<string, unknown>[];
+    allRows.push(...page);
+
+    if (page.length < pageSize) break;
   }
 
-  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+  return allRows.map((row) => ({
     symbol: (row.symbol as string | null) ?? symbolBase,
     canonical_symbol: (row.canonical_symbol as string | null) ?? normalizeCanonicalSymbol(symbolBase),
     type,
@@ -1191,6 +1257,25 @@ async function buildChartResponseBody(
   ]);
 
   const filteredRows = maybeFilterRowsByType(sortRowsByTs(snapshotRows), type);
+  const firstTs = filteredRows[0]?.ts ?? null;
+  const lastTs = filteredRows[filteredRows.length - 1]?.ts ?? null;
+  const firstMs = firstTs ? new Date(firstTs).getTime() : NaN;
+  const lastMs = lastTs ? new Date(lastTs).getTime() : NaN;
+  const requestedMs = rangeDurationMs(range);
+  const requestedDays = requestedMs === null ? null : requestedMs / (24 * 60 * 60 * 1000);
+  const availableDays =
+    Number.isFinite(firstMs) && Number.isFinite(lastMs)
+      ? Math.max(0, (lastMs - firstMs) / (24 * 60 * 60 * 1000))
+      : 0;
+  const toleranceMs = bucketToleranceMs(bucket);
+  const rangeComplete =
+    range === "all"
+      ? filteredRows.length > 0
+      : Number.isFinite(firstMs) &&
+        Number.isFinite(lastMs) &&
+        firstMs <= new Date(fromIso).getTime() + toleranceMs &&
+        lastMs >= Date.now() - toleranceMs;
+
   const sampledRows = downsample(filteredRows, targetPointsByRange(range));
   const series = buildSeriesByType(type, sampledRows);
   const chartTabs = buildChartTabs(type, series);
@@ -1234,7 +1319,15 @@ async function buildChartResponseBody(
               : "7d/30d 중기 차트는 get_pm_chart_points_v2 RPC를 통해 pm_chart_points_15m 15분 데이터를 사용합니다.",
         "실제 원화 차이, 국내/해외 분산, 선물/현물 가격차, 구조 괴리도, 동조·선도·지연 지표를 V2 컬럼에서 제공합니다.",
         "과거 원본 3분 이력이 없던 구간은 최고/최저 거래소와 구조·동조 지표가 비어 있을 수 있으며, 신규 데이터부터 계속 축적됩니다.",
+        "Supabase REST의 1,000행 응답 제한을 페이지 단위로 이어 받아 전체 기간을 구성한 뒤 화면용 포인트로 축약합니다.",
       ],
+      coverage: {
+        firstTs,
+        lastTs,
+        availableDays,
+        requestedDays,
+        complete: rangeComplete,
+      },
       cache: {
         key: "",
         ttlSeconds: 0,
