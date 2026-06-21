@@ -1728,12 +1728,22 @@ function unitText(unit: UnitKey, value: number | null, digits = 3) {
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
+type XAxisTick = {
+  ts: string;
+  ms: number;
+  isLatest: boolean;
+};
+
 function formatAxisTime(ts: string, range: RangeKey, isLatest = false) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
 
   if (range === "1h") {
-    return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
   }
 
   if (range === "24h" || range === "7d") {
@@ -1742,75 +1752,122 @@ function formatAxisTime(ts: string, range: RangeKey, isLatest = false) {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     });
   }
 
   if (isLatest) {
-    return d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+    return d.toLocaleDateString("ko-KR", {
+      month: "numeric",
+      day: "numeric",
+    });
   }
 
-  return d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+  return d.toLocaleDateString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  });
 }
 
-function isCleanAxisTick(ts: string, range: RangeKey) {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return false;
-
-  const minutes = d.getMinutes();
-  const seconds = d.getSeconds();
+function alignAxisTickMs(
+  targetMs: number,
+  range: RangeKey,
+  mode: "nearest" | "ceil",
+) {
+  if (!Number.isFinite(targetMs)) return targetMs;
 
   if (range === "1h") {
-    return minutes % 15 === 0 && seconds === 0;
+    const stepMs = 15 * 60 * 1000;
+    return mode === "ceil"
+      ? Math.ceil(targetMs / stepMs) * stepMs
+      : Math.round(targetMs / stepMs) * stepMs;
   }
 
   if (range === "24h" || range === "7d") {
-    return minutes === 0 && seconds === 0;
+    const stepMs = 60 * 60 * 1000;
+    return mode === "ceil"
+      ? Math.ceil(targetMs / stepMs) * stepMs
+      : Math.round(targetMs / stepMs) * stepMs;
   }
 
-  return d.getHours() === 0 && minutes === 0 && seconds === 0;
+  const d = new Date(targetMs);
+  const startOfDay = new Date(d);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  if (mode === "ceil") {
+    if (startOfDay.getTime() < targetMs) {
+      startOfDay.setDate(startOfDay.getDate() + 1);
+    }
+    return startOfDay.getTime();
+  }
+
+  const nextDay = new Date(startOfDay);
+  nextDay.setDate(nextDay.getDate() + 1);
+
+  return targetMs - startOfDay.getTime() <= nextDay.getTime() - targetMs
+    ? startOfDay.getTime()
+    : nextDay.getTime();
 }
 
-function buildXAxisTickIndexes(points: SeriesVisualPoint[], range: RangeKey) {
-  if (!points.length) return [] as number[];
-  if (points.length === 1) return [0];
+function buildXAxisTicks(points: SeriesVisualPoint[], range: RangeKey): XAxisTick[] {
+  if (!points.length) return [];
 
-  const lastIndex = points.length - 1;
   const firstMs = new Date(points[0].ts).getTime();
-  const lastMs = new Date(points[lastIndex].ts).getTime();
-  const cleanIndexes = points
-    .map((point, index) => ({ index, ms: new Date(point.ts).getTime() }))
-    .filter(
-      (entry) =>
-        entry.index < lastIndex &&
-        Number.isFinite(entry.ms) &&
-        isCleanAxisTick(points[entry.index].ts, range),
-    );
+  const lastMs = new Date(points[points.length - 1].ts).getTime();
 
-  if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs) || !cleanIndexes.length) {
-    return [
-      0,
-      Math.floor(lastIndex / 3),
-      Math.floor((lastIndex * 2) / 3),
-      lastIndex,
-    ].filter((value, index, values) => values.indexOf(value) === index);
+  if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs)) return [];
+  if (firstMs === lastMs) {
+    return [{ ts: points[points.length - 1].ts, ms: lastMs, isLatest: true }];
   }
 
+  const spanMs = lastMs - firstMs;
   const targetRatios = [0, 1 / 3, 2 / 3];
-  const selected: number[] = [];
+  const alignedTicks: XAxisTick[] = [];
 
   for (const ratio of targetRatios) {
-    const targetMs = firstMs + (lastMs - firstMs) * ratio;
-    const candidate = [...cleanIndexes]
-      .filter((entry) => !selected.includes(entry.index))
-      .sort((a, b) => Math.abs(a.ms - targetMs) - Math.abs(b.ms - targetMs))[0];
+    const rawTargetMs = firstMs + spanMs * ratio;
+    let alignedMs = alignAxisTickMs(rawTargetMs, range, ratio === 0 ? "ceil" : "nearest");
 
-    if (candidate) selected.push(candidate.index);
+    if (alignedMs < firstMs) {
+      alignedMs = alignAxisTickMs(firstMs, range, "ceil");
+    }
+
+    if (!Number.isFinite(alignedMs) || alignedMs >= lastMs) continue;
+    if (alignedTicks.some((tick) => tick.ms === alignedMs)) continue;
+
+    alignedTicks.push({
+      ts: new Date(alignedMs).toISOString(),
+      ms: alignedMs,
+      isLatest: false,
+    });
   }
 
-  selected.push(lastIndex);
-  return selected
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .sort((a, b) => a - b);
+  alignedTicks.sort((a, b) => a.ms - b.ms);
+
+  const minimumGapRatio = 0.13;
+  const filteredTicks: XAxisTick[] = [];
+
+  for (const tick of alignedTicks) {
+    const previous = filteredTicks[filteredTicks.length - 1];
+    if (!previous || (tick.ms - previous.ms) / spanMs >= minimumGapRatio) {
+      filteredTicks.push(tick);
+    }
+  }
+
+  while (
+    filteredTicks.length &&
+    (lastMs - filteredTicks[filteredTicks.length - 1].ms) / spanMs < minimumGapRatio
+  ) {
+    filteredTicks.pop();
+  }
+
+  filteredTicks.push({
+    ts: points[points.length - 1].ts,
+    ms: lastMs,
+    isLatest: true,
+  });
+
+  return filteredTicks;
 }
 
 
@@ -2221,9 +2278,67 @@ function TimeSeriesChart({
   const yMin = Math.min(...yTicks);
   const yMax = Math.max(...yTicks);
 
+  const pointTimes = points.map((point) => new Date(point.ts).getTime());
+  const firstPointMs = pointTimes[0];
+  const lastPointMs = pointTimes[pointTimes.length - 1];
+  const hasTimeDomain =
+    Number.isFinite(firstPointMs) &&
+    Number.isFinite(lastPointMs) &&
+    lastPointMs > firstPointMs;
+
+  const xForMs = (ms: number) => {
+    if (!hasTimeDomain) return paddingLeft + chartWidth / 2;
+    const ratio = clamp((ms - firstPointMs) / (lastPointMs - firstPointMs), 0, 1);
+    return paddingLeft + ratio * chartWidth;
+  };
+
   const xForIndex = (index: number) => {
     if (points.length <= 1) return paddingLeft + chartWidth / 2;
-    return paddingLeft + (index / (points.length - 1)) * chartWidth;
+
+    const safeIndex = clamp(index, 0, points.length - 1);
+    const ms = pointTimes[safeIndex];
+
+    if (!Number.isFinite(ms)) {
+      return paddingLeft + (safeIndex / (points.length - 1)) * chartWidth;
+    }
+
+    return xForMs(ms);
+  };
+
+  const nearestPointIndexForRatio = (ratio: number) => {
+    if (points.length <= 1) return 0;
+
+    const safeRatio = clamp(ratio, 0, 1);
+    if (!hasTimeDomain) {
+      return Math.round(safeRatio * (points.length - 1));
+    }
+
+    const targetMs = firstPointMs + safeRatio * (lastPointMs - firstPointMs);
+    let low = 0;
+    let high = pointTimes.length - 1;
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      const midMs = pointTimes[mid];
+
+      if (!Number.isFinite(midMs) || midMs < targetMs) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    const rightIndex = clamp(low, 0, pointTimes.length - 1);
+    const leftIndex = clamp(rightIndex - 1, 0, pointTimes.length - 1);
+    const leftMs = pointTimes[leftIndex];
+    const rightMs = pointTimes[rightIndex];
+
+    if (!Number.isFinite(leftMs)) return rightIndex;
+    if (!Number.isFinite(rightMs)) return leftIndex;
+
+    return Math.abs(targetMs - leftMs) <= Math.abs(rightMs - targetMs)
+      ? leftIndex
+      : rightIndex;
   };
 
   const yFor = (value: number) => {
@@ -2236,7 +2351,7 @@ function TimeSeriesChart({
   const activeIndex = clamp(lockedIndex ?? hoverIndex ?? (points.length - 1), 0, points.length - 1);
   const activePoint = points[activeIndex];
   const activeX = xForIndex(activeIndex);
-  const xTickIndexes = buildXAxisTickIndexes(points, range);
+  const xTicks = buildXAxisTicks(points, range);
   const pointTooltipRows = series
     .flatMap((entry) => {
       const point = entry.data.find((candidate) => candidate.ts === activePoint.ts);
@@ -2275,7 +2390,7 @@ function TimeSeriesChart({
     const usablePx = Math.max(1, rect.width - leftPadPx - rightPadPx);
     const localX = clamp(clientX - rect.left - leftPadPx, 0, usablePx);
     const ratio = localX / usablePx;
-    const index = Math.round(ratio * (points.length - 1));
+    const index = nearestPointIndexForRatio(ratio);
     setHoverIndex(index);
   };
 
@@ -2309,7 +2424,7 @@ function TimeSeriesChart({
           const usablePx = Math.max(1, rect.width - leftPadPx - rightPadPx);
           const localX = clamp(e.clientX - rect.left - leftPadPx, 0, usablePx);
           const ratio = localX / usablePx;
-          setLockedIndex(Math.round(ratio * (points.length - 1)));
+          setLockedIndex(nearestPointIndexForRatio(ratio));
         }}
         onDoubleClick={() => setLockedIndex(null)}
       >
@@ -2370,14 +2485,20 @@ function TimeSeriesChart({
             </text>
           ))}
 
-          {xTickIndexes.map((idx, i) => {
-            const safeIndex = clamp(idx, 0, points.length - 1);
-            const point = points[safeIndex];
-            const x = xForIndex(safeIndex);
-            const anchor = i === 0 ? "start" : i === xTickIndexes.length - 1 ? "end" : "middle";
+          {xTicks.map((tick, i) => {
+            const x = xForMs(tick.ms);
+            const anchor = i === 0 ? "start" : tick.isLatest ? "end" : "middle";
+
             return (
-              <text key={`xtick-${i}`} x={x} y={height - 10} textAnchor={anchor} fontSize="11" fill="rgba(255,255,255,0.55)">
-                {formatAxisTime(point.ts, range, i === xTickIndexes.length - 1)}
+              <text
+                key={`xtick-${tick.ms}-${i}`}
+                x={x}
+                y={height - 10}
+                textAnchor={anchor}
+                fontSize="11"
+                fill="rgba(255,255,255,0.55)"
+              >
+                {formatAxisTime(tick.ts, range, tick.isLatest)}
               </text>
             );
           })}
