@@ -85,7 +85,7 @@ export default async function NewsDetailPage({ params }: { params: Promise<{ id:
           <h1 className="text-2xl font-bold text-white">뉴스</h1>
 
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-white/80">
-            <p className="mb-2 font-semibold">현재 이 뉴스 상세 데이터를 가져오지 못했습니다요, 보스.</p>
+            <p className="mb-2 font-semibold">현재 이 뉴스 상세 데이터를 가져오지 못했습니다.</p>
             <div className="text-sm text-white/60 leading-relaxed">
               1) Supabase RLS에서 <code className="text-white/70">news_posts</code> 읽기 허용 확인
               <br />
@@ -155,7 +155,7 @@ export default async function NewsDetailPage({ params }: { params: Promise<{ id:
         {body ? (
           <p className="mt-4 whitespace-pre-line text-white/70 leading-relaxed">{body}</p>
         ) : (
-          <p className="mt-4 text-white/50 text-sm">요약 내용이 없습니다요, 보스. (RSS/OG 메타가 비어있는 케이스일 수 있습니다요)</p>
+          <p className="mt-4 text-white/50 text-sm">요약 내용이 없습니다. (RSS/OG 메타가 비어있는 케이스일 수 있습니다.)</p>
         )}
 
         <div className="mt-6 flex flex-wrap items-center gap-2">

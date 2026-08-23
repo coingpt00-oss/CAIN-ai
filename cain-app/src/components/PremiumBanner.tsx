@@ -24,7 +24,7 @@ export default function PremiumBanner() {
         <div className="text-xs md:text-sm opacity-80">
           실시간 온체인 지표, 거래소별 체결 강도, 한국인 비중,{" "}
           <span className="text-cyan-300 font-semibold">
-            보스를 위한 맞춤 시나리오 분석
+            사용자 맞춤 시나리오 분석
           </span>
           을 이 영역에서 제공할 예정입니다.
         </div>

@@ -386,7 +386,7 @@ export default function CommunityListClient() {
 
       {error ? (
         <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          커뮤니티 글 목록을 불러오지 못했습니다. API 또는 Supabase community_posts 테이블을 확인해주십쇼.
+          커뮤니티 글 목록을 불러오지 못했습니다. API 또는 Supabase community_posts 테이블을 확인해 주세요.
           <div className="mt-1 text-xs text-red-200/70">{error}</div>
         </div>
       ) : null}

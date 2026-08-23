@@ -63,7 +63,7 @@ export default function AiBox({
     try {
       const finalPrompt = (prompt || defaultPrompt || "이 데이터 요약해줘").trim();
       if (!finalPrompt) {
-        setError("질문/지시문이 비어있습니다요, 보스.");
+        setError("질문/지시문이 비어 있습니다.");
         return;
       }
 
@@ -94,7 +94,7 @@ export default function AiBox({
 
       const t = (j?.text || "").toString().trim();
       if (!t) {
-        setError("AI 응답 텍스트가 비었습니다요. (서버 응답 파싱/모델 설정 확인 필요)");
+        setError("AI 응답 텍스트가 비어 있습니다. (서버 응답 파싱/모델 설정 확인 필요)");
         return;
       }
 

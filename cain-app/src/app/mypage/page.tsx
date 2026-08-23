@@ -188,9 +188,9 @@ async function fetchMyPosts(page = 1): Promise<MyPostsResult> {
 function usernameErrorMessage(error: string, remainingDays?: number) {
   switch (error) {
     case "missing_username":
-      return "새 닉네임을 입력해주십쇼.";
+      return "새 닉네임을 입력해 주세요.";
     case "username_length_invalid":
-      return "닉네임은 2~12자로 입력해주십쇼.";
+      return "닉네임은 2~12자로 입력해 주세요.";
     case "username_format_invalid":
       return "닉네임은 한글, 영문, 숫자, 언더바(_)만 사용할 수 있습니다.";
     case "reserved_username":
@@ -198,12 +198,12 @@ function usernameErrorMessage(error: string, remainingDays?: number) {
     case "username_already_taken":
       return "이미 사용 중인 닉네임입니다.";
     case "username_change_cooldown":
-      return `닉네임은 30일에 1회만 변경 가능합니다. ${remainingDays ?? ""}일 후 다시 시도해주십쇼.`;
+      return `닉네임은 30일에 1회만 변경 가능합니다. ${remainingDays ?? ""}일 후 다시 시도해 주세요.`;
     case "unauthorized":
     case "no_token":
     case "device_not_found":
     case "device_revoked":
-      return "로그인 세션이 만료되었습니다. 다시 로그인해주십쇼.";
+      return "로그인 세션이 만료되었습니다. 다시 로그인해 주세요.";
     default:
       return error || "닉네임 변경에 실패했습니다.";
   }
@@ -323,7 +323,7 @@ export default function MyPage() {
 
     if (!ok) {
       setPrefs(prev);
-      alert("저장 실패. 잠시 후 다시 시도하십쇼, 보스.");
+      alert("저장 실패. 잠시 후 다시 시도해 주세요.");
     }
   }
 
@@ -333,7 +333,7 @@ export default function MyPage() {
     const nextUsername = usernameDraft.trim();
 
     if (!nextUsername) {
-      setUsernameMsg("새 닉네임을 입력해주십쇼.");
+      setUsernameMsg("새 닉네임을 입력해 주세요.");
       return;
     }
 
@@ -343,7 +343,7 @@ export default function MyPage() {
     }
 
     if (nextUsername.length < 2 || nextUsername.length > 12) {
-      setUsernameMsg("닉네임은 2~12자로 입력해주십쇼.");
+      setUsernameMsg("닉네임은 2~12자로 입력해 주세요.");
       return;
     }
 
@@ -424,7 +424,7 @@ export default function MyPage() {
       <h1 className="text-3xl font-bold mb-2 text-cyan-300">마이페이지</h1>
 
       <div className="text-sm text-neutral-400 mb-8">
-        내 계정 상태와 알림 설정을 관리합니다요, 보스.
+        내 계정 상태와 알림 설정을 관리합니다.
       </div>
 
       {user.must_change_password ? (
@@ -435,7 +435,7 @@ export default function MyPage() {
                 임시 비밀번호를 사용 중입니다.
               </div>
               <div className="mt-1 text-sm text-white/70">
-                보안을 위해 새 비밀번호로 변경해주십쇼, 보스.
+                보안을 위해 새 비밀번호로 변경해 주세요.
               </div>
             </div>
 

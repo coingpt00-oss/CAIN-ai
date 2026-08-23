@@ -90,7 +90,7 @@ export default function RegisterPage() {
         return;
       }
 
-      setMsg("가입 신청 완료! 보스 승인 대기 상태입니다.");
+      setMsg("가입 신청 완료! 관리자 승인 대기 상태입니다.");
     } catch {
       setMsg("network_error");
     } finally {
